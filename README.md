@@ -27,10 +27,19 @@ Vulkan is a powerful visual interface and backend orchestration system for spawn
 - A local AI provider ([Ollama](https://ollama.ai) or [LM Studio](https://lmstudio.ai)) OR an API key for a cloud provider.
 
 ### 2. Launch
-The easiest way to start Vulkan is to run the built-in startup script:
+The easiest way to start Vulkan is to run the built-in startup script for your OS:
+
+**Windows:**
 ```bash
-./start_vulkan.bat
+start_vulkan.bat
 ```
+
+**Linux / macOS:**
+```bash
+chmod +x start_vulkan.sh
+./start_vulkan.sh
+```
+
 This script will automatically:
 1. Install all required dependencies for both frontend and backend.
 2. Launch the Node backend server on port `3001`.
