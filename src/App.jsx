@@ -15,25 +15,38 @@ function App() {
   const [providerModal, setProviderModal] = useState({ isOpen: false, name: '' });
   const [sshModalOpen, setSshModalOpen] = useState(false);
   
-  const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem('vulkan_chat_history');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [messages, setMessages] = useState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(() => {
-    const saved = localStorage.getItem('vulkan_nodes');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [edges, setEdges, onEdgesChange] = useEdgesState(() => {
-    const saved = localStorage.getItem('vulkan_edges');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Persistence
+  // Load from backend on mount
   useEffect(() => {
-    localStorage.setItem('vulkan_chat_history', JSON.stringify(messages));
-    localStorage.setItem('vulkan_nodes', JSON.stringify(nodes));
-    localStorage.setItem('vulkan_edges', JSON.stringify(edges));
+    fetch('http://127.0.0.1:3001/api/session/load')
+      .then(r => r.json())
+      .then(data => {
+        if (data.messages?.length || data.nodes?.length) {
+          setMessages(data.messages || []);
+          setNodes(data.nodes || []);
+          setEdges(data.edges || []);
+        }
+      })
+      .catch(err => console.error('[Vulkan] Initial load failed:', err));
+  }, [setNodes, setEdges]);
+
+  // Persistence (save to backend)
+  useEffect(() => {
+    if (!messages.length && !nodes.length) return;
+    
+    // Debounce save slightly to avoid flooding the backend
+    const timeout = setTimeout(() => {
+      fetch('http://127.0.0.1:3001/api/session/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, nodes, edges }),
+      }).catch(e => console.error('[Vulkan] Auto-save failed'));
+    }, 1000);
+
+    return () => clearTimeout(timeout);
   }, [messages, nodes, edges]);
 
   useEffect(() => {
@@ -368,15 +381,17 @@ function App() {
   const resetGraph = useCallback(async () => {
     try {
       await fetch('http://127.0.0.1:3001/api/instances', { method: 'DELETE' });
+      await fetch('http://127.0.0.1:3001/api/session/save', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [], nodes: [], edges: [] }) 
+      });
     } catch (e) { /* backend may be down */ }
 
     setNodes([]);
     setEdges([]);
     setMessages([]);
     rootNodeId.current = null;
-    localStorage.removeItem('vulkan_chat_history');
-    localStorage.removeItem('vulkan_nodes');
-    localStorage.removeItem('vulkan_edges');
   }, [setNodes, setEdges]);
 
   // ═══════════════════════════════════════════════════════════════

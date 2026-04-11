@@ -3,7 +3,6 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 :: ── Cleanup Previous Instances ──
-:: This prevents the "EADDRINUSE" errors you saw
 echo [SYSTEM] Cleaning up existing Vulkan processes...
 powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*server.js*' -or $_.CommandLine -like '*vite*' } | ForEach-Object { Stop-Process $_.ProcessId -Force }" > nul 2>&1
 
@@ -16,9 +15,13 @@ if %errorlevel% neq 0 (
     echo.
 )
 
+:: Use %CD% if %VULKAN_CWD% isn't set (e.g. if start_vulkan.bat is run directly)
+if "%VULKAN_CWD%"=="" set "VULKAN_CWD=%CD%"
+
 echo.
 echo   VULKAN AGENT COMMAND CENTER
 echo   ───────────────────────────
+echo   Active Work Dir: %VULKAN_CWD%
 echo.
 
 :: ── Backend Dependencies ──
@@ -39,7 +42,8 @@ if not exist node_modules (
 
 :: ── Start Backend ──
 echo   [3/4] Starting backend on port 3001...
-start /b cmd /c "cd /d "%~dp0backend" && node server.js"
+:: Pass the work dir as an argument to server.js
+start /b cmd /c "cd /d "%~dp0backend" && node server.js "%VULKAN_CWD%""
 
 :: ── Start Frontend ──
 echo   [4/4] Starting frontend on port 5173...
