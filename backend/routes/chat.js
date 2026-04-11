@@ -13,28 +13,13 @@ const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, '..', '..', 'prompts'
 
 const VALID_COMMANDS = ['spawn_instance', 'send_message', 'list_instances', 'terminate_instance'];
 
-/**
- * Lenient validation: checks if the output contains ANY valid commands.
- * Does NOT reject prose — local models often mix commands with explanation.
- * The frontend parser handles extracting commands from mixed output.
- */
 function validateOutput(text) {
   // Strip markdown backticks if the model wraps output in code blocks
   const cleanText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
-  const lines = cleanText.split('\n');
-  let hasValidCommand = false;
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    // Check if this line contains a valid command (anywhere in the line)
-    const commandMatch = line.match(/(\w+)\s*\(.*\)/);
-    if (commandMatch && VALID_COMMANDS.includes(commandMatch[1])) {
-      hasValidCommand = true;
-    }
-    // Don't reject — just keep scanning for any commands
-  }
-
-  return { valid: hasValidCommand, cleanText };
+  
+  // Since we now allow conversational responses, all output is technically valid.
+  // The frontend regex parser will safely pick out any commands embedded inside normal text.
+  return { valid: true, cleanText };
 }
 
 /**
