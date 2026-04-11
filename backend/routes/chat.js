@@ -71,6 +71,64 @@ function sanitizeMessages(msgs) {
     .map(({ role, content }) => ({ role, content }));
 }
 
+/**
+ * Normalizes streaming output for various providers into a consistent SSE stream.
+ */
+async function handleStreamingResponse(response, normalizedProvider, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      buffer += chunk;
+      
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // Keep the last incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+
+        if (normalizedProvider === 'ollama') {
+          try {
+            const json = JSON.parse(trimmedLine);
+            if (json.message?.content) {
+              res.write(`data: ${JSON.stringify({ text: json.message.content })}\n\n`);
+            }
+          } catch (e) {}
+        } else if (trimmedLine.startsWith('data: ')) {
+          const dataStr = trimmedLine.slice(6).trim();
+          if (dataStr === '[DONE]') continue;
+          try {
+            const json = JSON.parse(dataStr);
+            // OpenAI style
+            let content = json.choices?.[0]?.delta?.content || json.choices?.[0]?.text;
+            // Claude style
+            if (!content && json.type === 'content_block_delta') {
+              content = json.delta?.text;
+            }
+            if (content) {
+              res.write(`data: ${JSON.stringify({ text: content })}\n\n`);
+            }
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Vulkan] Stream reading error:', err);
+  } finally {
+    res.end();
+  }
+}
+
 router.post('/', async (req, res) => {
   const { provider, model, messages, config } = req.body;
   const normalizedProvider = provider.toLowerCase().replace(/\s/g, '');
@@ -81,6 +139,8 @@ router.post('/', async (req, res) => {
     { role: 'system', content: SYSTEM_PROMPT },
     ...sanitizeMessages(messages.filter(m => m.role !== 'system'))
   ];
+
+  const isStreaming = req.body.stream === true;
 
   // Local providers (LM Studio, Ollama) get fewer retries — they rarely improve with scolding
   const isLocal = normalizedProvider === 'lmstudio' || normalizedProvider === 'ollama';
@@ -108,10 +168,15 @@ router.post('/', async (req, res) => {
         headers['Authorization'] = `Bearer ${config?.apiKey || ''}`;
       }
 
-      body = JSON.stringify({ model, messages: finalMessages, ...options });
-      console.log(`[Vulkan] Requesting ${provider}: model="${model}", url=${url}, messages=${finalMessages.length}`);
+      body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, ...options });
+      console.log(`[Vulkan] Requesting ${provider}: model="${model}", url=${url}, stream=${isStreaming}`);
 
       const response = await fetch(url, { method: 'POST', headers, body });
+      
+      if (isStreaming) {
+        return handleStreamingResponse(response, normalizedProvider, res);
+      }
+      
       const data = await response.json();
 
       if (!response.ok) {
@@ -136,8 +201,13 @@ router.post('/', async (req, res) => {
     // ── Ollama ──
     } else if (normalizedProvider === 'ollama') {
       url = `${baseUrl}/api/chat`;
-      body = JSON.stringify({ model, messages: finalMessages, stream: false, options });
+      body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, options });
       const response = await fetch(url, { method: 'POST', headers, body });
+
+      if (isStreaming) {
+        return handleStreamingResponse(response, normalizedProvider, res);
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
@@ -168,9 +238,15 @@ router.post('/', async (req, res) => {
         max_tokens: 1024,
         messages: finalMessages.filter(m => m.role !== 'system'),
         system: SYSTEM_PROMPT,
+        stream: isStreaming,
         ...options,
       });
       const response = await fetch(url, { method: 'POST', headers, body });
+      
+      if (isStreaming) {
+        return handleStreamingResponse(response, normalizedProvider, res);
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
@@ -223,8 +299,12 @@ router.post('/', async (req, res) => {
   };
 
   try {
-    const reply = await fetchWithRetry();
-    res.json({ reply: reply || '(No response from model)' });
+    if (isStreaming) {
+      await fetchWithRetry(); 
+    } else {
+      const reply = await fetchWithRetry();
+      res.json({ reply: reply || '(No response from model)' });
+    }
   } catch (error) {
     console.error(`[Vulkan] Error with ${provider}:`, error.message);
     res.status(500).json({ error: 'Provider failed', details: error.message });

@@ -1,17 +1,24 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+:: ── Cleanup Previous Instances ──
+:: This prevents the "EADDRINUSE" errors you saw
+echo [SYSTEM] Cleaning up existing Vulkan processes...
+powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*server.js*' -or $_.CommandLine -like '*vite*' } | ForEach-Object { Stop-Process $_.ProcessId -Force }" > nul 2>&1
+
+:: ── Global Command Setup (Safe PowerShell Method) ──
+echo %PATH% | findstr /C:"%~dp0" >nul
+if %errorlevel% neq 0 (
+    echo [SETUP] Adding "vulkan" command to your system PATH safely...
+    powershell -Command "$p = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($p -notlike '*%~dp0*') { [Environment]::SetEnvironmentVariable('Path', $p.TrimEnd(';') + ';%~dp0', 'User') }"
+    echo [SETUP] Success! You can now type 'vulkan' in any NEW terminal.
+    echo.
+)
+
 echo.
-echo   ██╗   ██╗██╗   ██╗██╗     ██╗  ██╗ █████╗ ███╗   ██╗
-echo   ██║   ██║██║   ██║██║     ██║ ██╔╝██╔══██╗████╗  ██║
-echo   ██║   ██║██║   ██║██║     █████╔╝ ███████║██╔██╗ ██║
-echo   ╚██╗ ██╔╝██║   ██║██║     ██╔═██╗ ██╔══██║██║╚██╗██║
-echo    ╚████╔╝ ╚██████╔╝███████╗██║  ██╗██║  ██║██║ ╚████║
-echo     ╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
-echo.
-echo   Agent Command Center — Swarm Initialization
-echo   ─────────────────────────────────────────────
+echo   VULKAN AGENT COMMAND CENTER
+echo   ───────────────────────────
 echo.
 
 :: ── Backend Dependencies ──
@@ -32,11 +39,11 @@ if not exist node_modules (
 
 :: ── Start Backend ──
 echo   [3/4] Starting backend on port 3001...
-start "Vulkan Backend" /min cmd /c "cd /d "%~dp0backend" && node server.js"
+start /b cmd /c "cd /d "%~dp0backend" && node server.js"
 
 :: ── Start Frontend ──
 echo   [4/4] Starting frontend on port 5173...
-start "Vulkan Frontend" /min cmd /c "cd /d "%~dp0" && npx vite --host"
+start /b cmd /c "cd /d "%~dp0" && npx vite --host"
 
 echo.
 echo   Waiting for servers to initialize...
@@ -51,11 +58,12 @@ echo.
 
 start http://localhost:5173
 
-echo   Vulkan is operational. Press any key to shut down both servers.
+echo   Vulkan is operational. 
+echo   (Logs will appear above. Use Ctrl+C or press any key to shut down.)
 pause > nul
 
 echo.
-echo   Shutting down...
-taskkill /fi "WINDOWTITLE eq Vulkan Backend" /f > nul 2>&1
-taskkill /fi "WINDOWTITLE eq Vulkan Frontend" /f > nul 2>&1
+echo   Shutting down processes...
+powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*server.js*' -or $_.CommandLine -like '*vite*' } | ForEach-Object { Stop-Process $_.ProcessId -Force }" > nul 2>&1
+
 echo   All systems terminated.

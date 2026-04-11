@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const ChatView = ({ messages, onSendMessage, activeProvider }) => {
   const [input, setInput] = useState('');
@@ -17,16 +19,6 @@ const ChatView = ({ messages, onSendMessage, activeProvider }) => {
     setInput('');
   };
 
-  const formatMessage = (text) => {
-    if (!text) return '';
-    const parts = text.split(/(\*\*.*?\*\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={i} style={{ color: '#fff', fontWeight: '700' }}>{part.slice(2, -2)}</strong>;
-      }
-      return part;
-    });
-  };
 
   // ── Derive role tag from message metadata ──
   const getRoleTag = (m) => {
@@ -94,7 +86,13 @@ const ChatView = ({ messages, onSendMessage, activeProvider }) => {
                   <span style={styles.roundBadge}>{getRoundBadge(m)}</span>
                 )}
               </div>
-              <div className="text-mono" style={styles.content}>{formatMessage(m.content)}</div>
+              <div className="text-mono markdown-body" style={styles.content}>
+                {window.marked ? (
+                  <div dangerouslySetInnerHTML={{ __html: window.marked.parse(m.content) }} />
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                )}
+              </div>
             </div>
           </div>
         ))}

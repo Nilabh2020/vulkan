@@ -239,13 +239,13 @@ function App() {
           provider: savedProvider,
           model: config.model || '',
           messages: [...messages, userMsg],
-          config: config
+          config: config,
+          stream: true
         })
       });
-      
-      const data = await response.json();
 
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         const errMsg = data.details || data.error || `Backend error ${response.status}`;
         setMessages(prev => [...prev, {
           role: 'assistant',
@@ -255,10 +255,44 @@ function App() {
         return;
       }
 
-      const reply = data.reply || '';
+      // ── Handle Streaming ──
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let replyText = '';
       
-      // Show the orchestrator's raw command output in chat
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      // Add initial empty assistant message
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.text) {
+                replyText += data.text;
+                // Update the last message
+                setMessages(prev => {
+                  const newMsgs = [...prev];
+                  newMsgs[newMsgs.length - 1] = { 
+                    ...newMsgs[newMsgs.length - 1], 
+                    content: replyText 
+                  };
+                  return newMsgs;
+                });
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      
+      // ── Parse Commands after stream completes ──
+      const reply = replyText;
       
       // Parse orchestrator commands and spawn REAL agents
       // Use matchAll and [\s\S] to support multi-line arguments and single/double quotes
@@ -288,7 +322,9 @@ function App() {
       });
 
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'SYSTEM_ERROR: Backend connection failed.' }]);
+      console.error('[Vulkan] Chat request failed:', err);
+      const errorDetail = err.message || 'Unknown error';
+      setMessages(prev => [...prev, { role: 'assistant', content: `SYSTEM_ERROR: ${errorDetail}` }]);
     }
   }, [messages, spawnSubAgent]);
 
