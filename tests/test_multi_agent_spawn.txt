@@ -1,0 +1,14 @@
+Input:
+"spawn 5 subagents and make them say hi"
+
+Expected output:
+spawn_agent("agent1", "subagent", "say hi")
+spawn_agent("agent2", "subagent", "say hi")
+spawn_agent("agent3", "subagent", "say hi")
+spawn_agent("agent4", "subagent", "say hi")
+spawn_agent("agent5", "subagent", "say hi")
+send_message("agent1", "hi")
+send_message("agent2", "hi")
+send_message("agent3", "hi")
+send_message("agent4", "hi")
+send_message("agent5", "hi")
