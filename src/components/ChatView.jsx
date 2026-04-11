@@ -111,7 +111,10 @@ const ChatView = ({ messages, onSendMessage, activeProvider }) => {
                   <span style={styles.roundBadge}>{getRoundBadge(m)}</span>
                 )}
               </div>
-              <div className="text-mono markdown-body" style={styles.content}>
+              <div className="text-mono markdown-body" style={{
+                ...styles.content,
+                color: m.meta?.type === 'agent_completed' ? '#4ade80' : 'var(--text-primary)'
+              }}>
                 {window.marked ? (
                   <div dangerouslySetInnerHTML={{ __html: window.marked.parse(m.content) }} />
                 ) : (

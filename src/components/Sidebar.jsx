@@ -36,15 +36,26 @@ const Sidebar = ({ onSpawnAgent, onReset, onExport, onTerminate }) => {
       </div>
 
       <div style={styles.section}>
-        <div style={styles.toggles}>
-          <div style={styles.toggleItem}>
-            <span>Adaptive context</span>
-            <input type="checkbox" defaultChecked />
-          </div>
-          <div style={styles.toggleItem}>
-            <span>Recursive depth control</span>
-            <input type="checkbox" />
-          </div>
+        <h3 style={styles.title} className="text-glow">SWARM PRESETS</h3>
+        <div style={styles.presetGrid}>
+          <button 
+            style={styles.presetBtn} 
+            onClick={() => setPrompt("Deploy a Software Development Team: spawn one 'Lead Developer' to write code, one 'QA Tester' to review code, and one 'Technical Writer' to document it.")}
+          >
+            💻 Software Dev Team
+          </button>
+          <button 
+            style={styles.presetBtn} 
+            onClick={() => setPrompt("Deploy a Web Research Team: spawn an 'Info Gatherer' to search the web, and a 'Data Analyst' to compile and summarize the findings.")}
+          >
+            🔍 Web Research Team
+          </button>
+          <button 
+            style={styles.presetBtn} 
+            onClick={() => setPrompt("Deploy a Cybersecurity Auditing Team: spawn a 'Vulnerability Scanner' to scan code, and a 'Report Generator' to write the audit.")}
+          >
+            🛡️ Security Audit Team
+          </button>
         </div>
       </div>
 
@@ -133,16 +144,25 @@ const styles = {
     justifyContent: 'center',
     gap: '10px',
   },
-  toggles: {
+  presetGrid: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '8px',
   },
-  toggleItem: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '0.75rem',
+  presetBtn: {
+    padding: '10px 12px',
+    background: 'var(--surface-active)',
+    border: '1px solid var(--border-color)',
     color: 'var(--text-secondary)',
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    cursor: 'pointer',
+    borderRadius: 'var(--radius-sm)',
+    transition: 'all 0.2s',
+    textAlign: 'left',
   },
   sliderHeader: {
     display: 'flex',

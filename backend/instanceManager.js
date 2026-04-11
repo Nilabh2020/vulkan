@@ -51,9 +51,11 @@ class InstanceManager extends EventEmitter {
       `4. You MUST use EXACTLY the right syntax: tool_name("arg1", "arg2") with double quotes.`,
       `5. Once you have fully completed your objective, you MUST call task_complete("summary of result"). If you do not call task_complete() you will loop infinitely!`,
       `6. DO NOT hallucinate tools. Use ONLY the tools explicitly listed below.`,
+      `7. IF you need to collaborate or assign tasks, ALWAYS call available_agents() FIRST to see who is online.`,
       `</CRITICAL_INSTRUCTIONS>`,
       ``,
       `<CORE_TOOLS>`,
+      `available_agents()`,
       `send_message("target_agent", "message")`,
       `search_web("search query")`,
       `task_complete("detailed summary of what you accomplished")`,
@@ -136,6 +138,20 @@ class InstanceManager extends EventEmitter {
     try {
       const { provider, model, config } = instance.providerConfig;
 
+      // --- CONTEXT COMPRESSION & MEMORY CHECKPOINTING ---
+      if (instance.messages.length > 20) {
+        const sysMsg = instance.messages[0];
+        const recentMsgs = instance.messages.slice(-12);
+        
+        // Retain the system prompt and the last 12 turns, prune the rest to save context window and avoid crashes.
+        instance.messages = [
+          sysMsg,
+          { role: 'user', content: '[SYSTEM ALERT: Older conversation history has been archived to preserve active memory and token limits.]' },
+          ...recentMsgs
+        ];
+        console.log(`[Vulkan] Checkpointed and compressed active context for ${instance.name}`);
+      }
+
       console.log(`[Vulkan] ${instance.name} → inference (round ${instance.roundsCompleted + 1})`);
 
       const response = await runInference({
@@ -209,7 +225,7 @@ class InstanceManager extends EventEmitter {
     if (!instance) return false;
 
     // Match send_message commands (can span multiple lines, supports double/single quotes)
-    const msgRegex = /send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gi;
+    const msgRegex = /^\s*send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gim;
     let match;
     while ((match = msgRegex.exec(response)) !== null) {
       const [, targetName, message] = match;
@@ -217,7 +233,7 @@ class InstanceManager extends EventEmitter {
     }
 
     // Match task_complete commands (can span multiple lines)
-    const completeRegex = /task_complete\s*\(\s*["']([\s\S]*?)["']\s*\)/gi;
+    const completeRegex = /^\s*task_complete\s*\(\s*["']([\s\S]*?)["']\s*\)/gim;
     while ((match = completeRegex.exec(response)) !== null) {
       const [, summary] = match;
       instance.status = 'COMPLETED';
@@ -229,8 +245,36 @@ class InstanceManager extends EventEmitter {
       return false; // Stop further processing if task is complete
     }
 
+    // Match spawn_instance commands (Fractal Swarming: Agents spawning agents)
+    const spawnRegex = /^\s*spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gim;
+    let spawnMatch;
+    while ((spawnMatch = spawnRegex.exec(response)) !== null) {
+      const name = spawnMatch[2];
+      const role = spawnMatch[4];
+      const goal = spawnMatch[6];
+      console.log(`[Vulkan] ${instance.name} dynamically spawning child instance: ${name}`);
+      const childId = `node-sub-${Date.now()}-${name.replace(/\s+/g, '')}`;
+      
+      this.emit('event', {
+        type: 'instance_message',
+        data: {
+          from: { id: fromId, name: instance.name },
+          to: { id: 'system', name: 'SYSTEM' },
+          message: `SPAWNING CHILD AGENT: "${name}" (${role})`,
+        },
+      });
+
+      this.spawn(childId, name, role, goal, instance.providerConfig);
+
+      instance.messages.push({
+        role: 'user',
+        content: `[SYSTEM: Successfully spawned child agent "${name}" (${role}). You can coordinate with them via send_message("${name}", "content").]`
+      });
+      performedSearch = true; // Trigger inference again
+    }
+
     // Match search_web commands
-    const searchRegex = /search_web\s*\(\s*["'](.*?)["']\s*\)/gi;
+    const searchRegex = /^\s*search_web\s*\(\s*["'](.*?)["']\s*\)/gim;
     let performedSearch = false;
     while ((match = searchRegex.exec(response)) !== null) {
       const [, query] = match;
@@ -255,25 +299,107 @@ class InstanceManager extends EventEmitter {
       });
     }
 
-    // --- Extended Tools Regex ---
+    // Match available_agents commands
+    const availRegex = /^\s*available_agents\s*\(\s*\)/gim;
+    if (availRegex.test(response)) {
+      performedSearch = true;
+      const otherAgents = Array.from(this.instances.values())
+        .filter(i => i.status !== 'TERMINATED')
+        .map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`);
+      
+      const agentList = otherAgents.length > 0 ? otherAgents.join('\n') : "No other agents available.";
+      
+      this.emit('event', {
+        type: 'instance_message',
+        data: {
+           from: { id: fromId, name: instance.name },
+           to: { id: 'system', name: 'SYSTEM' },
+           message: `Queried available agents list.`
+        }
+      });
+      instance.messages.push({
+        role: 'user',
+        content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${agentList}`
+      });
+    }
+
+    // --- Extended Tools Parser ---
     const extendedTools = getToolNames();
     if (extendedTools.length > 0) {
       const toolNamesRegexStr = extendedTools.join('|');
-      const extendedToolRegex = new RegExp(`\\b(${toolNamesRegexStr})\\s*\\((.*?)\\)`, 'gi');
+      const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
       
-      while ((toolMatch = extendedToolRegex.exec(response)) !== null) {
-        const [, toolName, argsRaw] = toolMatch;
+      let match;
+      while ((match = startRegex.exec(response)) !== null) {
+        const toolName = match[1];
+        let depth = 1;
+        let argsRaw = '';
+        let inQuotes = false;
+        let quoteChar = '';
+        let isTriple = false;
+        const startIndex = match.index + match[0].length;
+        let endIndex = -1;
+        
+        for (let i = startIndex; i < response.length; i++) {
+          const char = response[i];
+          const pChar = response[i-1];
+          const substr3 = response.substring(i, i+3);
+          
+          if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
+            inQuotes = true; quoteChar = response[i]; isTriple = true;
+            argsRaw += substr3; i += 2; continue;
+          } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
+            inQuotes = false; isTriple = false;
+            argsRaw += substr3; i += 2; continue;
+          }
+          
+          if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
+            inQuotes = true; quoteChar = char;
+          } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
+            inQuotes = false;
+          }
+          
+          if (!inQuotes) {
+            if (char === '(') depth++;
+            else if (char === ')') depth--;
+          }
+          
+          if (depth === 0) {
+            endIndex = i;
+            break;
+          }
+          argsRaw += char;
+        }
+        
+        if (endIndex === -1) continue; // Malformed
+        
+        // Parse argsRaw into cleanly stripped array
         const args = [];
         let currentArg = '';
-        let inQuotes = false;
-        let quoteType = '';
+        inQuotes = false;
+        quoteChar = '';
+        isTriple = false;
+        
         for (let i = 0; i < argsRaw.length; i++) {
           const char = argsRaw[i];
-          if ((char === '"' || char === "'") && (i === 0 || argsRaw[i-1] !== '\\')) {
-            if (!inQuotes) { inQuotes = true; quoteType = char; }
-            else if (quoteType === char) { inQuotes = false; }
-            else { currentArg += char; }
-          } else if (char === ',' && !inQuotes) {
+          const pChar = argsRaw[i-1];
+          const substr3 = argsRaw.substring(i, i+3);
+          
+          if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
+            inQuotes = true; quoteChar = argsRaw[i]; isTriple = true;
+            i += 2; continue;
+          } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
+            inQuotes = false; isTriple = false;
+            i += 2; continue;
+          }
+          
+          if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
+            inQuotes = true; quoteChar = char; continue;
+          } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
+            inQuotes = false; continue;
+          }
+          
+          if (!inQuotes && char === ',') {
             args.push(currentArg.trim());
             currentArg = '';
           } else {
@@ -294,6 +420,14 @@ class InstanceManager extends EventEmitter {
         });
 
         const result = await executeGenericTool(toolName, args);
+
+        // Feature: Live Artifacts & Scratchpads
+        if (toolName === 'write_file') {
+          this.emit('event', {
+            type: 'artifact_updated',
+            data: { filename: args[0], content: args[1], author: instance.name }
+          });
+        }
 
         instance.messages.push({
           role: 'user',

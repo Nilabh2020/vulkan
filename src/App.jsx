@@ -20,6 +20,7 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   const [extendedToolNames, setExtendedToolNames] = useState([]);
+  const [artifacts, setArtifacts] = useState({});
 
   // Load from backend on mount
   useEffect(() => {
@@ -161,12 +162,19 @@ function App() {
             // Graph reset already handled in resetGraph()
             break;
 
-          case 'instance_message_failed':
+          case 'sys_error':
             setMessages(prev => [...prev, {
               role: 'assistant',
               content: `Message delivery failed: ${data.from} → ${data.target} (${data.reason})`,
               meta: { type: 'system_warning' },
             }]);
+            break;
+
+          case 'artifact_updated':
+            setArtifacts(prev => ({
+              ...prev,
+              [data.filename]: { content: data.content, author: data.author, timestamp: Date.now() }
+            }));
             break;
 
           default:
@@ -316,10 +324,10 @@ function App() {
       // ── Parse Commands after stream completes ──
       const reply = replyText;
       
-      // Improved Regex: Handle single/double quotes, optional spaces, and multi-line arguments
-      const spawnRegex = /spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gi;
-      const messageRegex = /send_message\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])([\s\S]*?)\3\s*\)/gi;
-      const searchRegex = /search_web\s*\(\s*(['"])(.*?)\1\s*\)/gi;
+      // Improved Regex: Handle single/double quotes, optional spaces, and multi-line arguments, strict start of line
+      const spawnRegex = /^\s*spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gim;
+      const messageRegex = /^\s*send_message\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])([\s\S]*?)\3\s*\)/gim;
+      const searchRegex = /^\s*search_web\s*\(\s*(['"])(.*?)\1\s*\)/gim;
 
       const spawnMatches = [...reply.matchAll(spawnRegex)];
       spawnMatches.forEach((match, index) => {
@@ -348,27 +356,106 @@ function App() {
         console.log(`[Vulkan] Orchestrator requested search: ${query}`);
       });
 
+      const availRegex = /^\s*available_agents\s*\(\s*\)/gim;
+      if (availRegex.test(reply)) {
+        setTimeout(() => {
+          fetch('http://127.0.0.1:3001/api/instances')
+            .then(res => res.json())
+            .then(data => {
+              const active = data.instances?.filter(i => i.status !== 'TERMINATED');
+              if (!active || active.length === 0) {
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\nNo other agents available.`,
+                  meta: { type: 'system_warning' }
+                }]);
+              } else {
+                const list = active.map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`).join('\n');
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${list}`,
+                  meta: { type: 'system_warning' }
+                }]);
+              }
+            }).catch(console.error);
+        }, 1000);
+      }
+
       // Parse generic tools
       if (extendedToolNames.length > 0) {
         const toolNamesRegexStr = extendedToolNames.join('|');
-        const extendedToolRegex = new RegExp(`\\b(${toolNamesRegexStr})\\s*\\((.*?)\\)`, 'gi');
-        const extendedMatches = [...reply.matchAll(extendedToolRegex)];
+        const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
         
-        extendedMatches.forEach((match, index) => {
+        let match;
+        while ((match = startRegex.exec(reply)) !== null) {
           const toolName = match[1];
-          const argsRaw = match[2];
+          let depth = 1;
+          let argsRaw = '';
+          let inQuotes = false;
+          let quoteChar = '';
+          let isTriple = false;
+          const startIndex = match.index + match[0].length;
+          let endIndex = -1;
+          
+          for (let i = startIndex; i < reply.length; i++) {
+            const char = reply[i];
+            const pChar = reply[i-1];
+            const substr3 = reply.substring(i, i+3);
+            
+            if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
+              inQuotes = true; quoteChar = reply[i]; isTriple = true;
+              argsRaw += substr3; i += 2; continue;
+            } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
+              inQuotes = false; isTriple = false;
+              argsRaw += substr3; i += 2; continue;
+            }
+            
+            if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
+              inQuotes = true; quoteChar = char;
+            } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
+              inQuotes = false;
+            }
+            
+            if (!inQuotes) {
+              if (char === '(') depth++;
+              else if (char === ')') depth--;
+            }
+            
+            if (depth === 0) {
+              endIndex = i;
+              break;
+            }
+            argsRaw += char;
+          }
+          
+          if (endIndex === -1) continue;
           
           const args = [];
           let currentArg = '';
-          let inQuotes = false;
-          let quoteType = '';
+          inQuotes = false;
+          quoteChar = '';
+          isTriple = false;
+          
           for (let i = 0; i < argsRaw.length; i++) {
             const char = argsRaw[i];
-            if ((char === '"' || char === "'") && (i === 0 || argsRaw[i-1] !== '\\')) {
-              if (!inQuotes) { inQuotes = true; quoteType = char; }
-              else if (quoteType === char) { inQuotes = false; }
-              else { currentArg += char; }
-            } else if (char === ',' && !inQuotes) {
+            const pChar = argsRaw[i-1];
+            const substr3 = argsRaw.substring(i, i+3);
+            
+            if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
+              inQuotes = true; quoteChar = argsRaw[i]; isTriple = true;
+              i += 2; continue;
+            } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
+              inQuotes = false; isTriple = false;
+              i += 2; continue;
+            }
+            
+            if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
+              inQuotes = true; quoteChar = char; continue;
+            } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
+              inQuotes = false; continue;
+            }
+            
+            if (!inQuotes && char === ',') {
               args.push(currentArg.trim());
               currentArg = '';
             } else {
@@ -376,8 +463,9 @@ function App() {
             }
           }
           if (currentArg.trim() !== '') args.push(currentArg.trim());
-
           
+          // Execute after delay
+          const index = 0;
           setTimeout(() => {
             fetch('http://127.0.0.1:3001/api/tools/execute', {
               method: 'POST',
@@ -394,7 +482,7 @@ function App() {
             })
             .catch(err => console.error('[Vulkan] Tool execution failed', err));
           }, 300 * index + 1500);
-        });
+        }
       }
 
     } catch (err) {
@@ -493,18 +581,42 @@ function App() {
           onClick={() => setView('graph')} 
           style={{...styles.toggleBtn, borderBottom: view === 'graph' ? '2px solid #fff' : '2px solid transparent'}}
         >SWARM_GRAPH</button>
+        <button 
+          onClick={() => setView('artifacts')} 
+          style={{...styles.toggleBtn, borderBottom: view === 'artifacts' ? '2px solid #fff' : '2px solid transparent'}}
+        >ARTIFACTS {Object.keys(artifacts).length > 0 && `(${Object.keys(artifacts).length})`}</button>
       </div>
 
       <div style={styles.mainLayout}>
         <Sidebar onSpawnAgent={spawnAgent} onReset={resetGraph} onExport={exportChats} onTerminate={terminateSwarm} />
-        {view === 'chat' ? (
+        {view === 'chat' && (
           <ChatView 
             messages={messages} 
             onSendMessage={handleChatRequest} 
             activeProvider={localStorage.getItem('vulkan_active_provider')} 
           />
-        ) : (
+        )}
+        {view === 'graph' && (
           <FlowGraph nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} />
+        )}
+        {view === 'artifacts' && (
+          <div style={{ flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', gap: '20px', flexWrap: 'wrap', alignContent: 'flex-start' }}>
+            {Object.entries(artifacts).length === 0 ? (
+               <div style={{ color: '#666', marginTop: '40px', width: '100%', textAlign: 'center' }}>No live artifacts generated yet. When agents use write_file(), files will appear here.</div>
+            ) : (
+              Object.entries(artifacts).map(([filename, data]) => (
+                <div key={filename} style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', minWidth: '400px', flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <strong style={{ color: '#4fc3ff' }}>{filename}</strong>
+                    <span style={{ fontSize: '0.7rem', color: '#666' }}>Author: {data.author}</span>
+                  </div>
+                  <pre style={{ background: '#09090b', padding: '12px', borderRadius: '4px', fontSize: '0.8rem', overflowX: 'auto', color: '#e5e5e5' }}>
+                    {data.content}
+                  </pre>
+                </div>
+              ))
+            )}
+          </div>
         )}
       </div>
 
