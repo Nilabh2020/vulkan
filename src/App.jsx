@@ -343,6 +343,21 @@ function App() {
     localStorage.removeItem('vulkan_edges');
   }, [setNodes, setEdges]);
 
+  // ═══════════════════════════════════════════════════════════════
+  // exportChats — downloads the current conversation history as a JSON file
+  // ═══════════════════════════════════════════════════════════════
+  const exportChats = useCallback(() => {
+    const dataStr = JSON.stringify(messages, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `vulkan_swarm_export_${new Date().getTime()}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  }, [messages]);
+
   return (
     <div style={styles.appContainer}>
       <GridBackground />
@@ -360,7 +375,7 @@ function App() {
       </div>
 
       <div style={styles.mainLayout}>
-        <Sidebar onSpawnAgent={spawnAgent} onReset={resetGraph} />
+        <Sidebar onSpawnAgent={spawnAgent} onReset={resetGraph} onExport={exportChats} />
         {view === 'chat' ? (
           <ChatView 
             messages={messages} 
