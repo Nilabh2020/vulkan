@@ -10,6 +10,7 @@
 
 import EventEmitter from 'events';
 import { runInference } from './inference.js';
+import { performWebSearch } from './search.js';
 
 const MAX_ROUNDS = 5;
 
@@ -44,6 +45,7 @@ class InstanceManager extends EventEmitter {
       ``,
       `You may embed commands anywhere in your response:`,
       `  send_message("agent_name", "your message to that agent")`,
+      `  search_web("your search query")`,
       `  task_complete("short summary of what you accomplished")`,
       ``,
       `RULES:`,
@@ -157,10 +159,10 @@ class InstanceManager extends EventEmitter {
       console.log(`[Vulkan] ${instance.name} ← response (${response.length} chars, round ${instance.roundsCompleted})`);
 
       // Parse and route any commands embedded in the response
-      this.parseAndRouteCommands(id, response);
+      const performedSearch = await this.parseAndRouteCommands(id, response);
 
-      // If messages arrived while we were thinking, run another round
-      if (instance._pendingRound) {
+      // If messages arrived while we were thinking OR if we just performed a web search, run another round
+      if (performedSearch || instance._pendingRound) {
         instance._pendingRound = false;
         setTimeout(() => this.runInstanceInference(id), 800);
       }
@@ -175,12 +177,12 @@ class InstanceManager extends EventEmitter {
   }
 
   /**
-   * Scan an agent's response for send_message() and task_complete() commands
+   * Scan an agent's response for send_message, task_complete, and search_web commands
    * and route them accordingly.
    */
-  parseAndRouteCommands(fromId, response) {
+  async parseAndRouteCommands(fromId, response) {
     const instance = this.instances.get(fromId);
-    if (!instance) return;
+    if (!instance) return false;
 
     // Match send_message commands (can span multiple lines, supports double/single quotes)
     const msgRegex = /send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gi;
@@ -200,7 +202,36 @@ class InstanceManager extends EventEmitter {
         data: { id: fromId, name: instance.name, summary },
       });
       console.log(`[Vulkan] ${instance.name} COMPLETED: ${summary}`);
+      return false; // Stop further processing if task is complete
     }
+
+    // Match search_web commands
+    const searchRegex = /search_web\s*\(\s*["'](.*?)["']\s*\)/gi;
+    let performedSearch = false;
+    while ((match = searchRegex.exec(response)) !== null) {
+      const [, query] = match;
+      performedSearch = true;
+      console.log(`[Vulkan] ${instance.name} searching web for: "${query}"`);
+      
+      this.emit('event', {
+        type: 'instance_message',
+        data: {
+          from: { id: fromId, name: instance.name },
+          to: { id: 'system', name: 'WEB_SEARCH_ENGINE' },
+          message: `Executing web search for: "${query}"...`,
+        },
+      });
+
+      const searchResults = await performWebSearch(query);
+
+      // Inject the search results back into this instance's context
+      instance.messages.push({
+        role: 'user', // Present it as new input from the system
+        content: `[SYSTEM ALERT: WEB SEARCH RESULTS FOR "${query}"]\n\n${searchResults}`
+      });
+    }
+
+    return performedSearch;
   }
 
   /**
