@@ -75,6 +75,27 @@ const AgentNode = ({ data }) => {
           </span>
           <span style={{ color: 'var(--text-muted)', fontSize: '8px' }}>L{data.depth || 0}</span>
         </div>
+        
+        {data.rounds !== undefined && (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            marginTop: '4px',
+            borderTop: '1px dashed var(--border-color)',
+            paddingTop: '8px'
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '7px', textTransform: 'uppercase' }}>Rounds</span>
+              <span style={{ color: 'var(--text-primary)', fontSize: '9px', fontWeight: '600' }} className="text-mono">{data.rounds}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-end' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '7px', textTransform: 'uppercase' }}>Context Size</span>
+              <span style={{ color: 'var(--text-primary)', fontSize: '9px', fontWeight: '600' }} className="text-mono">
+                {data.contextLen > 1024 ? (data.contextLen / 1024).toFixed(1) + ' KB' : (data.contextLen || 0) + ' B'}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: '#333' }} />
     </div>

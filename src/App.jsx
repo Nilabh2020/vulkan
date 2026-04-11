@@ -78,7 +78,7 @@ function App() {
 
           case 'instance_response':
             setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'ACTIVE' } } : n
+              n.id === `node-${data.id}` || n.id === data.id ? { ...n, data: { ...n.data, status: 'ACTIVE', rounds: data.round, contextLen: data.contextLen } } : n
             ));
             setMessages(prev => [...prev, {
               role: 'assistant',

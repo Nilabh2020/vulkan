@@ -141,6 +141,8 @@ class InstanceManager extends EventEmitter {
       instance.roundsCompleted++;
       instance.status = 'ACTIVE';
 
+      const contextLen = instance.messages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
+
       this.emit('event', {
         type: 'instance_response',
         data: {
@@ -148,6 +150,7 @@ class InstanceManager extends EventEmitter {
           name: instance.name,
           response,
           round: instance.roundsCompleted,
+          contextLen,
         },
       });
 
