@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot } from 'lucide-react';
+import { Send, Bot, Mic } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const ChatView = ({ messages, onSendMessage, activeProvider }) => {
   const [input, setInput] = useState('');
+  const [isListening, setIsListening] = useState(false);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -19,6 +20,30 @@ const ChatView = ({ messages, onSendMessage, activeProvider }) => {
     setInput('');
   };
 
+  const handleListen = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in your browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput((prev) => prev + (prev ? ' ' : '') + transcript);
+      setIsListening(false);
+    };
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error", event.error);
+      setIsListening(false);
+    };
+    recognition.onend = () => setIsListening(false);
+
+    recognition.start();
+  };
 
   // ── Derive role tag from message metadata ──
   const getRoleTag = (m) => {
@@ -100,6 +125,13 @@ const ChatView = ({ messages, onSendMessage, activeProvider }) => {
 
       <div style={styles.inputArea}>
         <div style={styles.inputWrapper}>
+          <button 
+            style={{...styles.micBtn, color: isListening ? '#f87171' : 'var(--text-secondary)'}} 
+            onClick={handleListen}
+            title="Speech to Text"
+          >
+            <Mic size={14} className={isListening ? 'pulse' : ''} />
+          </button>
           <input 
             style={styles.input}
             className="text-mono"
@@ -193,9 +225,21 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
   },
+  micBtn: {
+    position: 'absolute',
+    left: '12px',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+    transition: 'color 0.2s',
+  },
   input: {
     width: '100%',
-    padding: '12px 45px 12px 16px',
+    padding: '12px 45px 12px 40px',
     background: 'var(--bg-color)',
     border: '1px solid var(--border-color)',
     color: 'var(--text-primary)',

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Play, Plus, StopCircle, RefreshCw, Download } from 'lucide-react';
 
-const Sidebar = ({ onSpawnAgent, onReset, onExport }) => {
+const Sidebar = ({ onSpawnAgent, onReset, onExport, onTerminate }) => {
   const [prompt, setPrompt] = useState('');
 
   return (
@@ -60,7 +60,7 @@ const Sidebar = ({ onSpawnAgent, onReset, onExport }) => {
         <button style={styles.controlBtn} onClick={onExport}>
           <Download size={14} /> EXPORT TO JSON
         </button>
-        <button style={styles.controlBtn}>
+        <button style={styles.controlBtn} onClick={onTerminate}>
           <StopCircle size={14} /> TERMINATE ALL
         </button>
         <button style={styles.controlBtn} onClick={onReset}>

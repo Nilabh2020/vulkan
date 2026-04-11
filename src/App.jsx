@@ -19,6 +19,8 @@ function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
+  const [extendedToolNames, setExtendedToolNames] = useState([]);
+
   // Load from backend on mount
   useEffect(() => {
     fetch('http://127.0.0.1:3001/api/session/load')
@@ -31,6 +33,13 @@ function App() {
         }
       })
       .catch(err => console.error('[Vulkan] Initial load failed:', err));
+
+    fetch('http://127.0.0.1:3001/api/tools')
+      .then(r => r.json())
+      .then(data => {
+        if (data.names) setExtendedToolNames(data.names);
+      })
+      .catch(err => console.error('[Vulkan] Tool load failed:', err));
   }, [setNodes, setEdges]);
 
   // Persistence (save to backend)
@@ -307,32 +316,86 @@ function App() {
       // ── Parse Commands after stream completes ──
       const reply = replyText;
       
-      // Parse orchestrator commands and spawn REAL agents
-      // Use matchAll and [\s\S] to support multi-line arguments and single/double quotes
-      const spawnMatches = [...reply.matchAll(/spawn_instance\s*\(\s*["'](.*?)["']\s*,\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gi)];
-      
+      // Improved Regex: Handle single/double quotes, optional spaces, and multi-line arguments
+      const spawnRegex = /spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gi;
+      const messageRegex = /send_message\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])([\s\S]*?)\3\s*\)/gi;
+      const searchRegex = /search_web\s*\(\s*(['"])(.*?)\1\s*\)/gi;
+
+      const spawnMatches = [...reply.matchAll(spawnRegex)];
       spawnMatches.forEach((match, index) => {
-        const [, name, role, goal] = match;
-        // Stagger spawns slightly to avoid hammering the provider
-        setTimeout(() => {
-          spawnSubAgent(name, role, goal);
-        }, 200 * index);
+        const name = match[2];
+        const role = match[4];
+        const goal = match[6];
+        setTimeout(() => spawnSubAgent(name, role, goal), 200 * index);
       });
 
-      // Parse send_message("instance", "message") from the orchestrator
-      const messageMatches = [...reply.matchAll(/send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gi)];
-      
+      const messageMatches = [...reply.matchAll(messageRegex)];
       messageMatches.forEach((match, index) => {
-        const [, target, msg] = match;
-        // Route to real instance via backend
+        const target = match[2];
+        const msg = match[4];
         setTimeout(() => {
           fetch('http://127.0.0.1:3001/api/instances/message-by-name', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ targetName: target, message: msg }),
           }).catch(() => {});
-        }, 200 * index + 1000); // Extra delay to ensure instances are spawned first
+        }, 200 * index + 1000);
       });
+
+      const searchMatches = [...reply.matchAll(searchRegex)];
+      searchMatches.forEach((match, index) => {
+        const query = match[2];
+        console.log(`[Vulkan] Orchestrator requested search: ${query}`);
+      });
+
+      // Parse generic tools
+      if (extendedToolNames.length > 0) {
+        const toolNamesRegexStr = extendedToolNames.join('|');
+        const extendedToolRegex = new RegExp(`\\b(${toolNamesRegexStr})\\s*\\((.*?)\\)`, 'gi');
+        const extendedMatches = [...reply.matchAll(extendedToolRegex)];
+        
+        extendedMatches.forEach((match, index) => {
+          const toolName = match[1];
+          const argsRaw = match[2];
+          
+          const args = [];
+          let currentArg = '';
+          let inQuotes = false;
+          let quoteType = '';
+          for (let i = 0; i < argsRaw.length; i++) {
+            const char = argsRaw[i];
+            if ((char === '"' || char === "'") && (i === 0 || argsRaw[i-1] !== '\\')) {
+              if (!inQuotes) { inQuotes = true; quoteType = char; }
+              else if (quoteType === char) { inQuotes = false; }
+              else { currentArg += char; }
+            } else if (char === ',' && !inQuotes) {
+              args.push(currentArg.trim());
+              currentArg = '';
+            } else {
+              currentArg += char;
+            }
+          }
+          if (currentArg.trim() !== '') args.push(currentArg.trim());
+
+          
+          setTimeout(() => {
+            fetch('http://127.0.0.1:3001/api/tools/execute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ toolName, args }),
+            })
+            .then(res => res.json())
+            .then(result => {
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: `> **Tool Execution: \`${toolName}\`**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+                meta: { type: 'system_warning' }
+              }]);
+            })
+            .catch(err => console.error('[Vulkan] Tool execution failed', err));
+          }, 300 * index + 1500);
+        });
+      }
 
     } catch (err) {
       console.error('[Vulkan] Chat request failed:', err);
@@ -376,11 +439,18 @@ function App() {
   }, [spawnAgent]);
 
   // ═══════════════════════════════════════════════════════════════
+  const terminateSwarm = useCallback(async () => {
+    try {
+      await fetch('http://127.0.0.1:3001/api/instances', { method: 'DELETE' });
+    } catch (e) { /* backend may be down */ }
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
   // resetGraph — terminates all real instances + clears UI
   // ═══════════════════════════════════════════════════════════════
   const resetGraph = useCallback(async () => {
+    await terminateSwarm();
     try {
-      await fetch('http://127.0.0.1:3001/api/instances', { method: 'DELETE' });
       await fetch('http://127.0.0.1:3001/api/session/save', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
@@ -392,7 +462,7 @@ function App() {
     setEdges([]);
     setMessages([]);
     rootNodeId.current = null;
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, terminateSwarm]);
 
   // ═══════════════════════════════════════════════════════════════
   // exportChats — downloads the current conversation history as a JSON file
@@ -426,7 +496,7 @@ function App() {
       </div>
 
       <div style={styles.mainLayout}>
-        <Sidebar onSpawnAgent={spawnAgent} onReset={resetGraph} onExport={exportChats} />
+        <Sidebar onSpawnAgent={spawnAgent} onReset={resetGraph} onExport={exportChats} onTerminate={terminateSwarm} />
         {view === 'chat' ? (
           <ChatView 
             messages={messages} 

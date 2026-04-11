@@ -11,6 +11,7 @@
 import EventEmitter from 'events';
 import { runInference } from './inference.js';
 import { performWebSearch } from './search.js';
+import { generatePromptExtension, executeGenericTool, getToolNames } from './toolRegistry.js';
 
 const MAX_ROUNDS = 5;
 
@@ -30,32 +31,38 @@ class InstanceManager extends EventEmitter {
       .filter(i => i.name !== name && i.status !== 'TERMINATED')
       .map(i => `${i.name} (${i.role})`);
 
-    return [
-      `[VULKAN_SUB_AGENT]`,
+    const basePrompt = [
+      `[VULKAN_SUB_AGENT_INITIALIZATION]`,
       `IDENTITY: ${name}`,
       `ROLE: ${role}`,
       `OBJECTIVE: ${goal}`,
       ``,
-      `You are an autonomous AI sub-agent inside the Vulkan swarm.`,
-      `Your role is "${role}" and your objective is: "${goal}"`,
+      `You are an autonomous AI sub-agent within the Vulkan swarm.`,
+      `Your role is "${role}" and your specific objective is: "${goal}"`,
       ``,
       otherAgents.length > 0
-        ? `OTHER ACTIVE AGENTS IN SWARM: ${otherAgents.join(', ')}`
-        : `You are currently the first agent in this swarm.`,
+        ? `OTHER ACTIVE AGENTS: ${otherAgents.join(', ')}`
+        : `You are currently the only active agent in this swarm.`,
       ``,
-      `You may embed commands anywhere in your response:`,
-      `  send_message("agent_name", "your message to that agent")`,
-      `  search_web("your search query")`,
-      `  task_complete("short summary of what you accomplished")`,
+      `<CRITICAL_INSTRUCTIONS>`,
+      `1. You MUST begin working on your OBJECTIVE immediately.`,
+      `2. You are a real worker, not a simulator. Do not say "I will do this". ACTUALLY DO IT by doing analysis or calling tools.`,
+      `3. To use a tool, write the tool command on its own line in plain text. DO NOT wrap commands in markdown code blocks like \`\`\`.`,
+      `4. You MUST use EXACTLY the right syntax: tool_name("arg1", "arg2") with double quotes.`,
+      `5. Once you have fully completed your objective, you MUST call task_complete("summary of result"). If you do not call task_complete() you will loop infinitely!`,
+      `6. DO NOT hallucinate tools. Use ONLY the tools explicitly listed below.`,
+      `</CRITICAL_INSTRUCTIONS>`,
       ``,
-      `RULES:`,
-      `1. Begin working on your objective immediately.`,
-      `2. Provide substantive analysis — you are a real worker, not a simulator.`,
-      `3. Use send_message() to share findings with peer agents.`,
-      `4. Call task_complete() when your objective is fulfilled.`,
-      `5. Be thorough but concise.`,
+      `<CORE_TOOLS>`,
+      `send_message("target_agent", "message")`,
+      `search_web("search query")`,
+      `task_complete("detailed summary of what you accomplished")`,
+      `</CORE_TOOLS>`,
     ].join('\n');
+    
+    return basePrompt + generatePromptExtension();
   }
+
 
   /**
    * Spawn a new instance: create it, store it, and fire off its first inference.
@@ -142,6 +149,23 @@ class InstanceManager extends EventEmitter {
       instance.responses.push({ content: response, timestamp: Date.now() });
       instance.roundsCompleted++;
       instance.status = 'ACTIVE';
+
+      // --- LOOP DETECTION ---
+      if (instance.responses.length >= 3) {
+        const last1 = instance.responses[instance.responses.length - 1].content.trim();
+        const last2 = instance.responses[instance.responses.length - 2].content.trim();
+        const last3 = instance.responses[instance.responses.length - 3].content.trim();
+        
+        if (last1 === last2 && last2 === last3) {
+          instance.status = 'ERROR';
+          console.error(`[Vulkan] ${instance.name} terminated due to repeating infinite loop.`);
+          this.emit('event', {
+            type: 'instance_error',
+            data: { id, name: instance.name, error: 'Infinite loop detected (repetitive output). Agent terminated.' },
+          });
+          return;
+        }
+      }
 
       const contextLen = instance.messages.reduce((acc, msg) => acc + (msg.content?.length || 0), 0);
 
@@ -231,8 +255,91 @@ class InstanceManager extends EventEmitter {
       });
     }
 
+    // --- Extended Tools Regex ---
+    const extendedTools = getToolNames();
+    if (extendedTools.length > 0) {
+      const toolNamesRegexStr = extendedTools.join('|');
+      const extendedToolRegex = new RegExp(`\\b(${toolNamesRegexStr})\\s*\\((.*?)\\)`, 'gi');
+      
+      while ((toolMatch = extendedToolRegex.exec(response)) !== null) {
+        const [, toolName, argsRaw] = toolMatch;
+        const args = [];
+        let currentArg = '';
+        let inQuotes = false;
+        let quoteType = '';
+        for (let i = 0; i < argsRaw.length; i++) {
+          const char = argsRaw[i];
+          if ((char === '"' || char === "'") && (i === 0 || argsRaw[i-1] !== '\\')) {
+            if (!inQuotes) { inQuotes = true; quoteType = char; }
+            else if (quoteType === char) { inQuotes = false; }
+            else { currentArg += char; }
+          } else if (char === ',' && !inQuotes) {
+            args.push(currentArg.trim());
+            currentArg = '';
+          } else {
+            currentArg += char;
+          }
+        }
+        if (currentArg.trim() !== '') args.push(currentArg.trim());
+        
+        console.log(`[Vulkan] ${instance.name} called extended tool: ${toolName}`);
+        
+        this.emit('event', {
+          type: 'instance_message',
+          data: {
+            from: { id: fromId, name: instance.name },
+            to: { id: 'system', name: `TOOL_REGISTRY` },
+            message: `Executing generic tool: ${toolName}(...)`,
+          },
+        });
+
+        const result = await executeGenericTool(toolName, args);
+
+        instance.messages.push({
+          role: 'user',
+          content: `[SYSTEM ALERT: TOOL EXECUTION RESULT FOR ${toolName}]\n\n${JSON.stringify(result, null, 2)}`
+        });
+        
+        performedSearch = true; // Trigger another inference round to process the tool result
+      }
+    }
+
+    // --- Hallucination Detection ---
+    if (!performedSearch && instance.status !== 'COMPLETED') {
+      const recognizedTools = new Set(['send_message', 'task_complete', 'search_web', ...getToolNames()]);
+      const lineToolRegex = /^\s*([a-zA-Z_]+)\s*\(['"]/gm;
+      let htMatch;
+      let hallucinationError = null;
+
+      while ((htMatch = lineToolRegex.exec(response)) !== null) {
+        const funcName = htMatch[1];
+        if (!recognizedTools.has(funcName)) {
+          hallucinationError = funcName;
+          break;
+        }
+      }
+
+      if (hallucinationError) {
+        console.warn(`[Vulkan] ${instance.name} hallucinated tool: ${hallucinationError}`);
+        this.emit('event', {
+          type: 'instance_message',
+          data: {
+            from: { id: 'system', name: 'SYSTEM' },
+            to: { id: fromId, name: instance.name },
+            message: `[HALLUCINATION DETECTED]: Tool '${hallucinationError}' does not exist.`
+          }
+        });
+        instance.messages.push({
+          role: 'user',
+          content: `[SYSTEM ALERT: ERROR] You attempted to use a tool called '${hallucinationError}'. This tool DOES NOT EXIST. Please use only the explicitly provided tools, or task_complete() if you are done.`
+        });
+        performedSearch = true; // Trigger inference again to self-correct
+      }
+    }
+
     return performedSearch;
   }
+
 
   /**
    * Deliver a message from one agent to another.

@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import chatRouter from './routes/chat.js';
 import instanceRouter from './routes/instances.js';
+import { executeGenericTool, getToolNames, getAllTools } from './toolRegistry.js';
 
 dotenv.config();
 
@@ -12,6 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const VULKAN_CWD = process.argv[2] || process.cwd();
+global.VULKAN_CWD = VULKAN_CWD;
 const MEMORY_FILE = path.join(VULKAN_CWD, 'vulkan_memory.json');
 
 app.use(cors());
@@ -42,11 +44,10 @@ app.post('/api/session/save', (req, res) => {
   const { messages, nodes, edges } = req.body;
   
   try {
-    // To keep the JSON light, we only save the last 10 messages 
-    // and a "summary" marker if it gets too long.
-    let persistentMessages = messages;
-    if (messages.length > 15) {
-      const lastMessages = messages.slice(-10);
+    const cleanMsgs = (messages || []).filter(m => m.content && m.content.trim() !== '');
+    let persistentMessages = cleanMsgs;
+    if (cleanMsgs.length > 15) {
+      const lastMessages = cleanMsgs.slice(-10);
       persistentMessages = [
         { role: 'assistant', content: `[SYSTEM: Older history truncated for performance. Active session follows.]` },
         ...lastMessages
@@ -69,6 +70,21 @@ app.post('/api/session/save', (req, res) => {
   }
 });
 
+// ── Tool Execution Routes ──────────────────────────────────────────
+app.get('/api/tools', (req, res) => {
+  res.json({ tools: getAllTools(), names: getToolNames() });
+});
+
+app.post('/api/tools/execute', async (req, res) => {
+  const { toolName, args } = req.body;
+  try {
+    const result = await executeGenericTool(toolName, args || []);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // ── Standard Routes ───────────────────────────────────────────────
 
 app.get('/health', (req, res) => res.json({ status: 'operational', workDir: VULKAN_CWD }));
@@ -76,7 +92,8 @@ app.get('/health', (req, res) => res.json({ status: 'operational', workDir: VULK
 app.post('/api/models', async (req, res) => {
   const { provider, baseUrl, apiKey } = req.body;
   const normalizedProvider = provider.toLowerCase().replace(/\s/g, '');
-  const cleanBaseUrl = baseUrl?.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const actualBaseUrl = baseUrl || (normalizedProvider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
+  const cleanBaseUrl = actualBaseUrl.endsWith('/') ? actualBaseUrl.slice(0, -1) : actualBaseUrl;
   
   try {
     let url;
