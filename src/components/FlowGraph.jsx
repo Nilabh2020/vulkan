@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   ReactFlow, 
   Background, 
@@ -8,7 +8,7 @@ import {
   Position
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Bot, Cpu } from 'lucide-react';
+import { Bot, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
 
 const STATUS_COLORS = {
   ACTIVE: '#4ade80',
@@ -22,6 +22,7 @@ const AgentNode = ({ data }) => {
   const isRoot = data.type === 'root';
   const Icon = isRoot ? Bot : Cpu;
   const statusColor = STATUS_COLORS[data.status] || '#71717a';
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div style={{
@@ -31,7 +32,7 @@ const AgentNode = ({ data }) => {
       borderRadius: 'var(--radius-sm)',
       padding: '0',
       fontSize: '11px',
-      width: 190,
+      width: 220,
       overflow: 'hidden',
     }}>
       {/* Status indicator bar at top */}
@@ -65,7 +66,7 @@ const AgentNode = ({ data }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Context</span>
             <div className="text-mono" style={{ color: 'var(--text-secondary)', fontSize: '9px', lineHeight: '1.4' }}>
-              {data.context}
+              {data.context.length > 60 ? data.context.substring(0, 60) + '...' : data.context}
             </div>
           </div>
         )}
@@ -97,6 +98,45 @@ const AgentNode = ({ data }) => {
           </div>
         )}
       </div>
+
+      {/* Expandable Debug/Info Section */}
+      <div style={{ borderTop: '1px solid var(--border-color)' }}>
+        <div 
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            padding: '6px 12px',
+            background: 'rgba(0,0,0,0.1)',
+            cursor: 'pointer',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '9px',
+            color: 'var(--text-muted)'
+          }}
+        >
+          <span>DEBUG INFO</span>
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </div>
+        {expanded && (
+          <div style={{ padding: '8px 12px', background: 'rgba(0,0,0,0.2)', fontSize: '9px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '7px', textTransform: 'uppercase' }}>Last Action</span>
+              <span style={{ color: 'var(--text-secondary)' }} className="text-mono">
+                {data.lastAction || 'Waiting for instructions...'}
+              </span>
+            </div>
+            {data.error && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                <span style={{ color: STATUS_COLORS.ERROR, fontSize: '7px', textTransform: 'uppercase' }}>Error Details</span>
+                <span style={{ color: '#fca5a5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} className="text-mono">
+                  {data.error}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <Handle type="source" position={Position.Bottom} style={{ background: '#333' }} />
     </div>
   );

@@ -95,13 +95,13 @@ function App() {
 
           case 'instance_status':
             setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: data.status } } : n
+              n.id === data.id ? { ...n, data: { ...n.data, status: data.status, lastAction: 'Thinking...' } } : n
             ));
             break;
 
           case 'instance_response':
             setNodes(nds => nds.map(n =>
-              n.id === `node-${data.id}` || n.id === data.id ? { ...n, data: { ...n.data, status: 'ACTIVE', rounds: data.round, contextLen: data.contextLen } } : n
+              n.id === `node-${data.id}` || n.id === data.id ? { ...n, data: { ...n.data, status: 'ACTIVE', rounds: data.round, contextLen: data.contextLen, lastAction: 'Generated response' } } : n
             ));
             setMessages(prev => [...prev, {
               role: 'assistant',
@@ -123,6 +123,12 @@ function App() {
                 style: { stroke: '#4fc3ff', strokeWidth: 1.5, opacity: 0.5 },
               }];
             });
+            // Update lastAction for the sender
+            if (data.from && data.from.id !== 'system' && data.from.id !== 'orchestrator') {
+               setNodes(nds => nds.map(n =>
+                 n.id === data.from.id ? { ...n, data: { ...n.data, lastAction: `Sent message to ${data.to.name}` } } : n
+               ));
+            }
             setMessages(prev => [...prev, {
               role: 'assistant',
               content: data.message,
@@ -132,7 +138,7 @@ function App() {
 
           case 'instance_completed':
             setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'COMPLETED' } } : n
+              n.id === data.id ? { ...n, data: { ...n.data, status: 'COMPLETED', lastAction: 'Task Completed' } } : n
             ));
             setMessages(prev => [...prev, {
               role: 'assistant',
@@ -143,7 +149,7 @@ function App() {
 
           case 'instance_error':
             setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'ERROR' } } : n
+              n.id === data.id ? { ...n, data: { ...n.data, status: 'ERROR', error: data.error, lastAction: 'Error occurred' } } : n
             ));
             setMessages(prev => [...prev, {
               role: 'assistant',
