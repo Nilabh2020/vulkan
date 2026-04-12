@@ -146,7 +146,8 @@ export function getToolNames() {
 export function generatePromptExtension() {
   loadCustomSkills();
   let prompt = '\n\nEXTENDED TOOL REGISTRY:\n';
-  prompt += 'You now have access to a massive extended toolset. To call any of these tools, use the exact syntax: tool_name("arg1", "arg2")\n\n';
+  prompt += 'You now have access to a massive extended toolset. To call any of these tools, use the exact syntax: tool_name("arg1", "arg2")\n';
+  prompt += 'CRITICAL: For multi-line arguments (like file contents), you MUST use triple quotes: """your\nmulti-line\ncode""" or \'\'\'your code\'\'\' to prevent escaping errors.\n\n';
   
   for (const [namespace, tools] of Object.entries(toolNamespaces)) {
     prompt += `### ${namespace}\n`;

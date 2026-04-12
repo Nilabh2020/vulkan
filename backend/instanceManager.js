@@ -12,6 +12,7 @@ import EventEmitter from 'events';
 import { runInference } from './inference.js';
 import { performWebSearch } from './search.js';
 import { generatePromptExtension, executeGenericTool, getToolNames } from './toolRegistry.js';
+import stringSimilarity from 'string-similarity';
 
 const MAX_ROUNDS = 100;
 
@@ -45,14 +46,12 @@ class InstanceManager extends EventEmitter {
         : `You are currently the only active agent in this swarm.`,
       ``,
       `<CRITICAL_INSTRUCTIONS>`,
-      `1. You MUST begin working on your OBJECTIVE immediately.`,
-      `2. You are a real worker, not a simulator. Do not say "I will do this". ACTUALLY DO IT by doing analysis or calling tools.`,
-      `3. SYNTAX IS CRITICAL: Write the tool command on its own line in plain text. DO NOT wrap commands in markdown code blocks like \`\`\`.`,
-      `4. STRING ESCAPING: You MUST use EXACTLY the right syntax: tool_name("arg1", "arg2") with double quotes. For multi-line arguments (like writing code to a file), you MUST use triple quotes: tool_name("file.js", """const a = 1;\\nconsole.log(a);""")`,
-      `5. NO COMMENTS: Do not write comments like // or # next to your tool calls.`,
-      `6. COMPLETION: Once you have fully completed your objective, you MUST call task_complete("summary of result"). If you do not call task_complete() you will loop infinitely!`,
-      `7. HALLUCINATION: DO NOT hallucinate tools. Use ONLY the tools explicitly listed below.`,
-      `8. COLLABORATION: IF you need to collaborate or assign tasks, ALWAYS call available_agents() FIRST to see who is online.`,
+      `1. ACTION MANDATE: Begin working on your OBJECTIVE immediately. Use analysis and tools. Do not simulate.`,
+      `2. SYNTAX: Write tool commands on their own lines. Use double quotes for arguments: tool_name("arg1", "arg2"). Use triple quotes for multi-line strings.`,
+      `3. NO COMMENTS: Never add // or # comments next to tool calls.`,
+      `4. STUCK PROTOCOL: If you are blocked, hit repetitive errors, or cannot find information after 3 attempts, you MUST send_message("orchestrator", "description of the block") and wait for new instructions.`,
+      `5. COMPLETION: When your objective is fully met, call task_complete("summary"). Failure to call this when done leads to wasted cycles.`,
+      `6. COLLABORATION: Use available_agents() to see who can help you.`,
       `</CRITICAL_INSTRUCTIONS>`,
       ``,
       `<CORE_TOOLS>`,
@@ -167,20 +166,35 @@ class InstanceManager extends EventEmitter {
       instance.roundsCompleted++;
       instance.status = 'ACTIVE';
 
-      // --- LOOP DETECTION ---
-      if (instance.responses.length >= 3) {
+      // --- FUZZY LOOP DETECTION & REPETITION WARNING ---
+      if (instance.responses.length >= 2) {
         const last1 = instance.responses[instance.responses.length - 1].content.trim();
         const last2 = instance.responses[instance.responses.length - 2].content.trim();
-        const last3 = instance.responses[instance.responses.length - 3].content.trim();
         
-        if (last1 === last2 && last2 === last3) {
-          instance.status = 'ERROR';
-          console.error(`[Vulkan] ${instance.name} terminated due to repeating infinite loop.`);
-          this.emit('event', {
-            type: 'instance_error',
-            data: { id, name: instance.name, error: 'Infinite loop detected (repetitive output). Agent terminated.' },
-          });
-          return;
+        const similarityScore = stringSimilarity.compareTwoStrings(last1, last2);
+        const IS_VERY_SIMILAR = similarityScore > 0.9;
+
+        if (IS_VERY_SIMILAR) {
+           // If we hit 3 in a row, terminate. If 2, just warn.
+           const last3 = instance.responses.length >= 3 ? instance.responses[instance.responses.length - 3].content.trim() : null;
+           const similarity3Score = last3 ? stringSimilarity.compareTwoStrings(last1, last3) : 0;
+           
+           if (similarity3Score > 0.9) {
+             instance.status = 'ERROR';
+             console.error(`[Vulkan] ${instance.name} terminated due to fuzzy infinite loop (similarity: ${similarity3Score.toFixed(2)}).`);
+             this.emit('event', {
+               type: 'instance_error',
+               data: { id, name: instance.name, error: 'Infinite loop detected (repetitive output). Agent terminated.' },
+             });
+             return;
+           } else {
+             // Inject a "Repetition Warning"
+             instance.messages.push({
+               role: 'user',
+               content: `[SYSTEM ALERT: REPETITIVE OUTPUT DETECTED] Your output is very similar to your previous response (90%+). If you continue to repeat yourself, you will be terminated. Please CHANGE YOUR STRATEGY, report being stuck, or try a different tool.`
+             });
+             performedSearch = true; // Trigger inference to handle the warning
+           }
         }
       }
 
@@ -228,6 +242,8 @@ class InstanceManager extends EventEmitter {
   async parseAndRouteCommands(fromId, response) {
     const instance = this.instances.get(fromId);
     if (!instance) return false;
+
+    let performedSearch = false;
 
     // Match send_message commands (can span multiple lines, supports double/single quotes)
     const msgRegex = /^\s*send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gim;
@@ -280,7 +296,6 @@ class InstanceManager extends EventEmitter {
 
     // Match search_web commands
     const searchRegex = /^\s*search_web\s*\(\s*["'](.*?)["']\s*\)/gim;
-    let performedSearch = false;
     while ((match = searchRegex.exec(response)) !== null) {
       const [, query] = match;
       performedSearch = true;
@@ -295,12 +310,20 @@ class InstanceManager extends EventEmitter {
         },
       });
 
-      const searchResults = await performWebSearch(query);
+      let searchResults = await performWebSearch(query);
+      
+      let feedback = `[SYSTEM ALERT: WEB SEARCH RESULTS FOR "${query}"]\n\n${searchResults}`;
+      
+      if (searchResults.includes("No results found")) {
+        feedback += `\n\n[HINT: No results were found. Try broadening your query, using different keywords, or checking with other agents for domain intelligence.]`;
+      } else if (searchResults.includes("Web search failed")) {
+        feedback += `\n\n[HINT: The search engine is currently unavailable. Try alternative tools or report the issue to the orchestrator.]`;
+      }
 
       // Inject the search results back into this instance's context
       instance.messages.push({
         role: 'user', // Present it as new input from the system
-        content: `[SYSTEM ALERT: WEB SEARCH RESULTS FOR "${query}"]\n\n${searchResults}`
+        content: feedback
       });
     }
 

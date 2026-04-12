@@ -109,6 +109,10 @@ app.post('/api/models', async (req, res) => {
     }
 
     const response = await fetch(url, { headers });
+    if (!response.ok) {
+       const errData = await response.json().catch(() => ({}));
+       throw new Error(errData?.error?.message || errData?.error || `Provider returned status ${response.status}`);
+    }
     const data = await response.json();
     let models = [];
     
