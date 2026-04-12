@@ -118,61 +118,81 @@ router.post('/', async (req, res) => {
     let body;
     let headers = { 'Content-Type': 'application/json' };
     const options = { temperature: 0.6, top_p: 0.9, max_tokens: 4096 };
+    const MAX_RETRIES = 5;
 
-    if (['lmstudio', 'openai', 'chatgpt', 'openrouter', 'nvidia'].includes(normalizedProvider)) {
-      url = normalizedProvider === 'lmstudio' ? `${baseUrl}/v1/chat/completions` :
-            ['openai', 'chatgpt'].includes(normalizedProvider) ? 'https://api.openai.com/v1/chat/completions' :
-            normalizedProvider === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' :
-            'https://integrate.api.nvidia.com/v1/chat/completions';
-      if (normalizedProvider !== 'lmstudio') headers['Authorization'] = `Bearer ${config?.apiKey || ''}`;
-      body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, ...options });
-      const response = await fetch(url, { method: 'POST', headers, body });
-      if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message || `Provider error ${response.status}`);
-      return validateOutput(extractReply(data, normalizedProvider)).cleanText;
-
-    } else if (normalizedProvider === 'ollama') {
-      url = `${baseUrl}/api/chat`;
-      body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, options });
-      const response = await fetch(url, { method: 'POST', headers, body });
-      if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || `Ollama returned ${response.status}`);
-      return validateOutput(extractReply(data, normalizedProvider)).cleanText;
-
-    } else if (normalizedProvider === 'claude') {
-      url = 'https://api.anthropic.com/v1/messages';
-      headers['x-api-key'] = config?.apiKey || '';
-      headers['anthropic-version'] = '2023-06-01';
-      body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20240620', max_tokens: 1024, messages: finalMessages.filter(m => m.role !== 'system'), system: SYSTEM_PROMPT, stream: isStreaming, ...options });
-      const response = await fetch(url, { method: 'POST', headers, body });
-      if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message || `Claude error ${response.status}`);
-      return validateOutput(extractReply(data, normalizedProvider)).cleanText;
-
-    } else if (normalizedProvider === 'gemini') {
-      url = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${config?.apiKey || ''}`;
-      const contents = [];
-      const geminiMsgs = finalMessages.filter(m => m.role !== 'system');
-      for (const m of geminiMsgs) {
-        const role = m.role === 'user' ? 'user' : 'model';
-        if (contents.length > 0 && contents[contents.length - 1].role === role) {
-          contents[contents.length - 1].parts[0].text += '\n\n' + m.content;
-        } else {
-          contents.push({ role, parts: [{ text: m.content }] });
+    try {
+      if (['lmstudio', 'openai', 'chatgpt', 'openrouter', 'nvidia'].includes(normalizedProvider)) {
+        url = normalizedProvider === 'lmstudio' ? `${baseUrl}/v1/chat/completions` :
+              ['openai', 'chatgpt'].includes(normalizedProvider) ? 'https://api.openai.com/v1/chat/completions' :
+              normalizedProvider === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' :
+              'https://integrate.api.nvidia.com/v1/chat/completions';
+        if (normalizedProvider !== 'lmstudio') headers['Authorization'] = `Bearer ${config?.apiKey || ''}`;
+        body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, ...options });
+        const response = await fetch(url, { method: 'POST', headers, body });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || errData?.error || `Provider error ${response.status}`);
         }
+        if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
+        const data = await response.json();
+        return validateOutput(extractReply(data, normalizedProvider)).cleanText;
+
+      } else if (normalizedProvider === 'ollama') {
+        url = `${baseUrl}/api/chat`;
+        body = JSON.stringify({ model, messages: finalMessages, stream: isStreaming, options });
+        const response = await fetch(url, { method: 'POST', headers, body });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData?.error || `Ollama returned ${response.status}`);
+        }
+        if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
+        const data = await response.json();
+        return validateOutput(extractReply(data, normalizedProvider)).cleanText;
+
+      } else if (normalizedProvider === 'claude') {
+        url = 'https://api.anthropic.com/v1/messages';
+        headers['x-api-key'] = config?.apiKey || '';
+        headers['anthropic-version'] = '2023-06-01';
+        body = JSON.stringify({ model: model || 'claude-3-5-sonnet-20240620', max_tokens: 1024, messages: finalMessages.filter(m => m.role !== 'system'), system: SYSTEM_PROMPT, stream: isStreaming, ...options });
+        const response = await fetch(url, { method: 'POST', headers, body });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `Claude error ${response.status}`);
+        }
+        if (isStreaming) return handleStreamingResponse(response, normalizedProvider, res);
+        const data = await response.json();
+        return validateOutput(extractReply(data, normalizedProvider)).cleanText;
+
+      } else if (normalizedProvider === 'gemini') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${config?.apiKey || ''}`;
+        const contents = [];
+        const geminiMsgs = finalMessages.filter(m => m.role !== 'system');
+        for (const m of geminiMsgs) {
+          const role = m.role === 'user' ? 'user' : 'model';
+          if (contents.length > 0 && contents[contents.length - 1].role === role) {
+            contents[contents.length - 1].parts[0].text += '\n\n' + m.content;
+          } else {
+            contents.push({ role, parts: [{ text: m.content }] });
+          }
+        }
+        const bodyPayload = { contents, generationConfig: { temperature: 0, topP: 0.1 } };
+        if (SYSTEM_PROMPT) bodyPayload.system_instruction = { parts: [{ text: SYSTEM_PROMPT }] };
+        const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(bodyPayload) });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `Gemini error ${response.status}`);
+        }
+        const data = await response.json();
+        return validateOutput(extractReply(data, normalizedProvider)).cleanText;
+      } else {
+        throw new Error(`Unsupported provider: "${provider}"`);
       }
-      const bodyPayload = { contents, generationConfig: { temperature: 0, topP: 0.1 } };
-      if (SYSTEM_PROMPT) bodyPayload.system_instruction = { parts: [{ text: SYSTEM_PROMPT }] };
-      const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(bodyPayload) });
-      // Gemini streaming is currently non-standard SSE; handling as non-stream for now to prevent errors
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message || `Gemini error ${response.status}`);
-      return validateOutput(extractReply(data, normalizedProvider)).cleanText;
-    } else {
-      throw new Error(`Unsupported provider: "${provider}"`);
+    } catch (err) {
+      if (retryCount >= MAX_RETRIES) throw err;
+      const delay = Math.pow(2, retryCount) * 1000;
+      console.warn(`[Vulkan] Chat request failed (${err.message}). Retrying ${retryCount + 1}/${MAX_RETRIES} in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return fetchWithRetry(retryCount + 1);
     }
   };
 

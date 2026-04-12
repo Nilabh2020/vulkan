@@ -141,15 +141,15 @@ export async function runInference({ provider, model, messages, config }) {
       headers,
       body: JSON.stringify(body),
     });
-
-    const data = await response.json();
-
     if (!response.ok) {
-      throw new Error(data.error?.message || `Gemini error: ${response.status}`);
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData?.error?.message || `Gemini error: ${response.status}`);
     }
+    const data = await response.json();
 
     return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   }
 
   throw new Error(`Unsupported provider: ${provider}`);
 }
+
