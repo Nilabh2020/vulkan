@@ -225,14 +225,14 @@ function App() {
       const id = data.instance.id;
 
       setNodes(nds => {
-        const cols = 5;
-        const spacingX = 320;
-        const spacingY = 220;
+        const cols = 8;
+        const spacingX = 400;
+        const spacingY = 280;
         // Start counting after the root node
         const index = Math.max(0, nds.length - 1);
         const row = Math.floor(index / cols);
         const col = index % cols;
-        const x = 450 + (col * spacingX) + (Math.random() * 20);
+        const x = 500 + (col * spacingX) + (Math.random() * 20);
         const y = 50 + (row * spacingY) + (Math.random() * 20);
 
         return [...nds, {
