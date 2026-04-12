@@ -51,8 +51,9 @@ class InstanceManager extends EventEmitter {
       `3. NO COMMENTS: Never add // or # comments next to tool calls.`,
       `4. STUCK PROTOCOL: If you are blocked, hit repetitive errors, or cannot find information after 3 attempts, you MUST send_message("orchestrator", "description of the block") and wait for new instructions.`,
       `5. COMPLETION: When your objective is fully met, call task_complete("summary"). Failure to call this when done leads to wasted cycles.`,
-      `6. COLLABORATION: Use available_agents() to see who can help you.`,
+      `6. COLLABORATIVE MANDATE: Utilization of the swarm is MANDATORY. For complex tasks, use available_agents() to identify partners and coordinate via send_message(). No agent should work in isolation if others can provide intelligence or validation.`,
       `</CRITICAL_INSTRUCTIONS>`,
+
       ``,
       `<CORE_TOOLS>`,
       `available_agents()`,
