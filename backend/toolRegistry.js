@@ -183,29 +183,40 @@ export async function executeGenericTool(toolName, args) {
   console.log(`[Tool Registry] Executing ${toolName} with args:`, args);
   const VULKAN_CWD = global.VULKAN_CWD || process.cwd();
 
+  // Safely ensure args is an array of strings to prevent undefined crashes
+  const safeArgs = Array.isArray(args) ? args.map(a => typeof a === 'string' ? a : String(a)) : [];
+
   try {
     if (toolName === 'list_directory') {
-      const targetDir = args[0] ? path.resolve(VULKAN_CWD, args[0]) : VULKAN_CWD;
+      const targetDir = safeArgs[0] ? path.resolve(VULKAN_CWD, safeArgs[0]) : VULKAN_CWD;
+      if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+         throw new Error(`Directory not found: ${targetDir}`);
+      }
       const files = fs.readdirSync(targetDir);
       return { status: 'success', directory: targetDir, files };
     }
     
     if (toolName === 'read_file') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
+      if (!safeArgs[0]) throw new Error('Missing file_path argument');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      if (!fs.existsSync(targetPath)) throw new Error('File not found: ' + targetPath);
       const content = fs.readFileSync(targetPath, 'utf8');
       return { status: 'success', file: targetPath, content: content };
     }
 
     if (toolName === 'read_pdf') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
+      if (!safeArgs[0]) throw new Error('Missing file_path argument');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      if (!fs.existsSync(targetPath)) throw new Error('File not found: ' + targetPath);
       const dataBuffer = fs.readFileSync(targetPath);
       const data = await pdfParse(dataBuffer);
       return { status: 'success', file: targetPath, text: data.text };
     }
 
     if (toolName === 'write_file') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
-      const content = args[1] || '';
+      if (!safeArgs[0]) throw new Error('Missing file_path argument');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      const content = safeArgs[1] || '';
       if (targetPath.endsWith('.json')) {
         try {
           JSON.parse(content);
@@ -213,18 +224,24 @@ export async function executeGenericTool(toolName, args) {
           throw new Error('Invalid JSON format: ' + e.message);
         }
       }
+      const dir = path.dirname(targetPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(targetPath, content, 'utf8');
       return { status: 'success', file: targetPath, message: 'File written successfully.' };
     }
 
     if (toolName === 'append_file') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
-      fs.appendFileSync(targetPath, args[1] || '', 'utf8');
+      if (!safeArgs[0]) throw new Error('Missing file_path argument');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      const dir = path.dirname(targetPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(targetPath, safeArgs[1] || '', 'utf8');
       return { status: 'success', file: targetPath, message: 'Content appended successfully.' };
     }
 
     if (toolName === 'verify_filesystem') {
-      const paths = args[0].split(',').map(p => p.trim());
+      if (!safeArgs[0]) throw new Error('Missing file_paths argument');
+      const paths = safeArgs[0].split(',').map(p => p.trim());
       const missing = [];
       const empty = [];
       for (const p of paths) {
@@ -243,10 +260,11 @@ export async function executeGenericTool(toolName, args) {
     }
 
     if (toolName === 'replace_code_block') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
-      const searchStr = args[1];
-      const replaceStr = args[2];
-      if (!fs.existsSync(targetPath)) throw new Error('File not found');
+      if (safeArgs.length < 3) throw new Error('Missing arguments for replace_code_block. Expected: file_path, search_string, replace_string');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      const searchStr = safeArgs[1];
+      const replaceStr = safeArgs[2];
+      if (!fs.existsSync(targetPath)) throw new Error('File not found: ' + targetPath);
       let content = fs.readFileSync(targetPath, 'utf8');
       if (!content.includes(searchStr)) throw new Error('Search string not found in file');
       content = content.replace(searchStr, replaceStr);
@@ -255,30 +273,46 @@ export async function executeGenericTool(toolName, args) {
     }
 
     if (toolName === 'create_directory') {
-      const targetPath = path.resolve(VULKAN_CWD, args[0]);
-      fs.mkdirSync(targetPath, { recursive: true });
+      if (!safeArgs[0]) throw new Error('Missing dir_path argument');
+      const targetPath = path.resolve(VULKAN_CWD, safeArgs[0]);
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
+      }
       return { status: 'success', directory: targetPath, message: 'Directory created successfully.' };
     }
 
     if (toolName === 'run_command') {
+      if (!safeArgs[0]) throw new Error('Missing command argument');
       return new Promise((resolve) => {
-        exec(args[0], { cwd: VULKAN_CWD }, (error, stdout, stderr) => {
-          resolve({
-            status: error ? 'error' : 'success',
-            stdout: stdout.trim(),
-            stderr: stderr.trim(),
-            error: error ? error.message : null
+        try {
+          exec(safeArgs[0], { cwd: VULKAN_CWD, timeout: 60000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+            const outStr = stdout ? stdout.trim() : '';
+            const errStr = stderr ? stderr.trim() : '';
+            resolve({
+              status: error ? 'error' : 'success',
+              stdout: outStr.length > 15000 ? outStr.substring(0, 15000) + '\n... [TRUNCATED FOR LENGTH]' : outStr,
+              stderr: errStr.length > 15000 ? errStr.substring(0, 15000) + '\n... [TRUNCATED FOR LENGTH]' : errStr,
+              error: error ? error.message : null
+            });
           });
-        });
+        } catch (execErr) {
+          resolve({ status: 'error', message: execErr.message });
+        }
       });
     }
 
     if (toolName === 'create_skill') {
-      const [name, description, javascriptCode] = args;
+      if (safeArgs.length < 3) throw new Error('Missing arguments. Expected: name, description, javascript_code');
+      const [name, description, javascriptCode] = safeArgs;
       const skillsFile = path.join(VULKAN_CWD, 'vulkan_skills.json');
       let skills = [];
       if (fs.existsSync(skillsFile)) {
-        skills = JSON.parse(fs.readFileSync(skillsFile, 'utf8'));
+        try {
+          skills = JSON.parse(fs.readFileSync(skillsFile, 'utf8'));
+          if (!Array.isArray(skills)) skills = [];
+        } catch(e) {
+          skills = [];
+        }
       }
       skills.push({ name, description, javascriptCode });
       fs.writeFileSync(skillsFile, JSON.stringify(skills, null, 2));
@@ -290,9 +324,9 @@ export async function executeGenericTool(toolName, args) {
     // If it's a custom skill, we could theoretically eval() it, but for safety in this stub we just acknowledge it
     return {
       status: 'success',
-      message: `Executed ${toolName} successfully.`,
+      message: `Executed ${toolName} successfully (MOCK/STUB).`,
       tool: toolName,
-      args
+      args: safeArgs
     };
   } catch (error) {
     return { status: 'error', message: error.message };
