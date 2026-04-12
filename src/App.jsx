@@ -221,17 +221,27 @@ function App() {
         throw new Error(data.details || 'Spawn failed');
       }
 
-      // Add node to graph immediately (SSE will update its status)
+      // Add node to graph in an organized grid layout
       const id = data.instance.id;
-      const x = 450 + (Math.random() * 400);
-      const y = 50 + (Math.random() * 500);
 
-      setNodes(nds => [...nds, {
-        id,
-        type: 'agent',
-        position: { x, y },
-        data: { label: name, context: `${role}: ${goal}`, type: 'sub', status: 'ACTIVE', depth: 1 },
-      }]);
+      setNodes(nds => {
+        const cols = 5;
+        const spacingX = 320;
+        const spacingY = 220;
+        // Start counting after the root node
+        const index = Math.max(0, nds.length - 1);
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        const x = 450 + (col * spacingX) + (Math.random() * 20);
+        const y = 50 + (row * spacingY) + (Math.random() * 20);
+
+        return [...nds, {
+          id,
+          type: 'agent',
+          position: { x, y },
+          data: { label: name, context: `${role}: ${goal}`, type: 'sub', status: 'ACTIVE', depth: 1 },
+        }];
+      });
 
       if (rootNodeId.current) {
         setEdges(eds => [...eds, {
