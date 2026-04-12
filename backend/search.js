@@ -62,6 +62,9 @@ export async function performWebSearch(query, retryCount = 0) {
     return "Web Search Results:\n\n" + results.join('\n\n');
   } catch (error) {
     console.error('[Search] Web Search Error:', error);
+    if (error.name === 'TypeError' && error.message === 'fetch failed') {
+       return "Web search failed: The search engine is currently unavailable or your connection was reset. Please try again later or use alternative sources.";
+    }
     return `Web search failed: ${error.message}`;
   }
 }

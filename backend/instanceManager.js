@@ -138,6 +138,7 @@ class InstanceManager extends EventEmitter {
 
     try {
       const { provider, model, config } = instance.providerConfig;
+      let performedSearch = false;
 
       // --- CONTEXT COMPRESSION & MEMORY CHECKPOINTING ---
       if (instance.messages.length > 20) {
@@ -215,7 +216,7 @@ class InstanceManager extends EventEmitter {
       console.log(`[Vulkan] ${instance.name} ← response (${response.length} chars, round ${instance.roundsCompleted})`);
 
       // Parse and route any commands embedded in the response
-      const performedSearch = await this.parseAndRouteCommands(id, response);
+      performedSearch = await this.parseAndRouteCommands(id, response);
 
       // If messages arrived while we were thinking OR if we just performed a web search, run another round
       if (performedSearch || instance._pendingRound) {
