@@ -19,11 +19,13 @@ const toolNamespaces = {
   ],
   'File System': [
     { name: 'read_file', args: ['file_path'], description: 'Read the contents of a file (txt, md, json, etc.).' },
-    { name: 'write_file', args: ['file_path', 'content'], description: 'Write or overwrite a file with content.' },
+    { name: 'write_file', args: ['file_path', 'content'], description: 'Write or overwrite a file with content. Validates JSON files automatically.' },
     { name: 'append_file', args: ['file_path', 'content'], description: 'Append content to an existing file.' },
     { name: 'create_directory', args: ['dir_path'], description: 'Create a new directory.' },
     { name: 'read_pdf', args: ['file_path'], description: 'Read the text content of a PDF file.' },
-    { name: 'list_directory', args: ['dir_path'], description: 'List contents of a directory.' }
+    { name: 'list_directory', args: ['dir_path'], description: 'List contents of a directory.' },
+    { name: 'verify_filesystem', args: ['file_paths'], description: 'Check if a comma-separated list of files exist and have non-zero size.' },
+    { name: 'replace_code_block', args: ['file_path', 'search_string', 'replace_string'], description: 'Surgically replace a specific block of code in a file.' }
   ],
   'Git / Version Control': [
     { name: 'add_git_remote', args: ['name', 'url'], description: 'Add a new git remote.' },
@@ -203,7 +205,15 @@ export async function executeGenericTool(toolName, args) {
 
     if (toolName === 'write_file') {
       const targetPath = path.resolve(VULKAN_CWD, args[0]);
-      fs.writeFileSync(targetPath, args[1] || '', 'utf8');
+      const content = args[1] || '';
+      if (targetPath.endsWith('.json')) {
+        try {
+          JSON.parse(content);
+        } catch (e) {
+          throw new Error('Invalid JSON format: ' + e.message);
+        }
+      }
+      fs.writeFileSync(targetPath, content, 'utf8');
       return { status: 'success', file: targetPath, message: 'File written successfully.' };
     }
 
@@ -211,6 +221,37 @@ export async function executeGenericTool(toolName, args) {
       const targetPath = path.resolve(VULKAN_CWD, args[0]);
       fs.appendFileSync(targetPath, args[1] || '', 'utf8');
       return { status: 'success', file: targetPath, message: 'Content appended successfully.' };
+    }
+
+    if (toolName === 'verify_filesystem') {
+      const paths = args[0].split(',').map(p => p.trim());
+      const missing = [];
+      const empty = [];
+      for (const p of paths) {
+        if (!p) continue;
+        const targetPath = path.resolve(VULKAN_CWD, p);
+        if (!fs.existsSync(targetPath)) {
+          missing.push(p);
+        } else if (fs.statSync(targetPath).size === 0) {
+          empty.push(p);
+        }
+      }
+      if (missing.length > 0 || empty.length > 0) {
+         throw new Error(`Filesystem verification failed. Missing: ${missing.join(', ')}. Empty: ${empty.join(', ')}.`);
+      }
+      return { status: 'success', message: 'All files verified successfully.' };
+    }
+
+    if (toolName === 'replace_code_block') {
+      const targetPath = path.resolve(VULKAN_CWD, args[0]);
+      const searchStr = args[1];
+      const replaceStr = args[2];
+      if (!fs.existsSync(targetPath)) throw new Error('File not found');
+      let content = fs.readFileSync(targetPath, 'utf8');
+      if (!content.includes(searchStr)) throw new Error('Search string not found in file');
+      content = content.replace(searchStr, replaceStr);
+      fs.writeFileSync(targetPath, content, 'utf8');
+      return { status: 'success', file: targetPath, message: 'Code block replaced successfully.' };
     }
 
     if (toolName === 'create_directory') {

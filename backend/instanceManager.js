@@ -13,7 +13,7 @@ import { runInference } from './inference.js';
 import { performWebSearch } from './search.js';
 import { generatePromptExtension, executeGenericTool, getToolNames } from './toolRegistry.js';
 
-const MAX_ROUNDS = 5;
+const MAX_ROUNDS = 100;
 
 class InstanceManager extends EventEmitter {
   constructor() {
@@ -212,6 +212,10 @@ class InstanceManager extends EventEmitter {
       this.emit('event', {
         type: 'instance_error',
         data: { id, name: instance.name, error: err.message },
+      });
+      this.emit('event', {
+        type: 'virtual_buffer_alert',
+        data: { message: `Virtual Buffer Alert (500/Error): ${err.message}` }
       });
     }
   }

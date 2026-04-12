@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3001;
 
 const VULKAN_CWD = process.argv[2] || process.cwd();
 global.VULKAN_CWD = VULKAN_CWD;
-const MEMORY_FILE = path.join(VULKAN_CWD, 'vulkan_memory.json');
+const MEMORY_FILE = path.join(VULKAN_CWD, '.vulkan_session.json');
 
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
