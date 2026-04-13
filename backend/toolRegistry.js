@@ -135,11 +135,14 @@ export function getToolNames() {
   const names = [];
   for (const tools of Object.values(toolNamespaces)) {
     for (const tool of tools) {
-      if (!['spawn_instance', 'send_message', 'search_web', 'task_complete'].includes(tool.name)) {
-        names.push(tool.name);
-      }
+      // Include all tools in the name list so the generic parser identifies them.
+      // Logic in App.jsx and instanceManager.js will decide whether to use 
+      // the generic executor or a custom handler.
+      names.push(tool.name);
     }
   }
+  // Add available_agents which is a core function but might not be in toolNamespaces
+  if (!names.includes('available_agents')) names.push('available_agents');
   return names;
 }
 

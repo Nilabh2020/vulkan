@@ -340,80 +340,26 @@ function App() {
       // ── Parse Commands after stream completes ──
       const reply = replyText;
       
-      // Improved Regex: Handle single/double quotes, optional spaces, and multi-line arguments, strict start of line
-      const spawnRegex = /^\s*spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gim;
-      const messageRegex = /^\s*send_message\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])([\s\S]*?)\3\s*\)/gim;
-      const searchRegex = /^\s*search_web\s*\(\s*(['"])(.*?)\1\s*\)/gim;
-
-      const spawnMatches = [...reply.matchAll(spawnRegex)];
-      spawnMatches.forEach((match, index) => {
-        const name = match[2];
-        const role = match[4];
-        const goal = match[6];
-        setTimeout(() => spawnSubAgent(name, role, goal), 200 * index);
-      });
-
-      const messageMatches = [...reply.matchAll(messageRegex)];
-      messageMatches.forEach((match, index) => {
-        const target = match[2];
-        const msg = match[4];
-        setTimeout(() => {
-          fetch('http://127.0.0.1:3001/api/instances/message-by-name', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetName: target, message: msg }),
-          }).catch(() => {});
-        }, 200 * index + 1000);
-      });
-
-      const searchMatches = [...reply.matchAll(searchRegex)];
-      searchMatches.forEach((match, index) => {
-        const query = match[2];
-        console.log(`[Vulkan] Orchestrator requested search: ${query}`);
-      });
-
-      const availRegex = /^\s*available_agents\s*\(\s*\)/gim;
-      if (availRegex.test(reply)) {
-        setTimeout(() => {
-          fetch('http://127.0.0.1:3001/api/instances')
-            .then(res => res.json())
-            .then(data => {
-              const active = data.instances?.filter(i => i.status !== 'TERMINATED');
-              if (!active || active.length === 0) {
-                setMessages(prev => [...prev, {
-                  role: 'assistant',
-                  content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\nNo other agents available.`,
-                  meta: { type: 'system_warning' }
-                }]);
-              } else {
-                const list = active.map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`).join('\n');
-                setMessages(prev => [...prev, {
-                  role: 'assistant',
-                  content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${list}`,
-                  meta: { type: 'system_warning' }
-                }]);
-              }
-            }).catch(console.error);
-        }, 1000);
-      }
-
-      // Parse generic tools
-      if (extendedToolNames.length > 0) {
-        const toolNamesRegexStr = extendedToolNames.join('|');
-        const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
+      // ── Unified Robust Tool Parser ──
+      const coreTools = ['spawn_instance', 'send_message', 'search_web', 'available_agents'];
+      const allTools = [...new Set([...(extendedToolNames || []), ...coreTools])];
+      
+      const toolNamesRegexStr = allTools.join('|');
+      const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
+      
+      let match;
+      while ((match = startRegex.exec(reply)) !== null) {
+        const toolName = match[1];
+        console.log(`[Vulkan] Detected tool call: ${toolName}`);
+        let depth = 1;
+        let argsRaw = '';
+        let inQuotes = false;
+        let quoteChar = '';
+        let isTriple = false;
+        const startIndex = match.index + match[0].length;
+        let endIndex = -1;
         
-        let match;
-        while ((match = startRegex.exec(reply)) !== null) {
-          const toolName = match[1];
-          let depth = 1;
-          let argsRaw = '';
-          let inQuotes = false;
-          let quoteChar = '';
-          let isTriple = false;
-          const startIndex = match.index + match[0].length;
-          let endIndex = -1;
-          
-          for (let i = startIndex; i < reply.length; i++) {
+        for (let i = startIndex; i < reply.length; i++) {
             const char = reply[i];
             const pChar = reply[i-1];
             const substr3 = reply.substring(i, i+3);
@@ -456,7 +402,7 @@ function App() {
             const char = argsRaw[i];
             const pChar = argsRaw[i-1];
             const substr3 = argsRaw.substring(i, i+3);
-            
+
             if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
               inQuotes = true; quoteChar = argsRaw[i]; isTriple = true;
               i += 2; continue;
@@ -480,27 +426,73 @@ function App() {
           }
           if (currentArg.trim() !== '') args.push(currentArg.trim());
           
-          // Execute after delay
-          const index = 0;
+          // --- Custom Handlers for Core Tools ---
+          if (toolName === 'spawn_instance') {
+            const [name, role, goal] = args;
+            spawnSubAgent(name, role, goal);
+            continue;
+          }
+
+          if (toolName === 'send_message') {
+            const [target, msg] = args;
+            fetch('http://127.0.0.1:3001/api/instances/message-by-name', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ targetName: target, message: msg }),
+            }).catch(() => {});
+            continue;
+          }
+
+          if (toolName === 'search_web') {
+            const [query] = args;
+            console.log(`[Vulkan] Orchestrator requested search: ${query}`);
+            continue;
+          }
+
+          if (toolName === 'available_agents') {
+            fetch('http://127.0.0.1:3001/api/instances')
+              .then(res => res.json())
+              .then(data => {
+                const active = data.instances?.filter(i => i.status !== 'TERMINATED');
+                if (!active || active.length === 0) {
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\nNo other agents available.`,
+                    meta: { type: 'system_warning' }
+                  }]);
+                } else {
+                  const list = active.map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`).join('\n');
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${list}`,
+                    meta: { type: 'system_warning' }
+                  }]);
+                }
+              }).catch(console.error);
+            continue;
+          }
+
+          // --- Generic Tool Execution ---
+          const toolNameConst = toolName;
+          const argsConst = args;
           setTimeout(() => {
             fetch('http://127.0.0.1:3001/api/tools/execute', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ toolName, args }),
+              body: JSON.stringify({ toolName: toolNameConst, args: argsConst }),
             })
             .then(res => res.json())
             .then(result => {
               setMessages(prev => [...prev, {
                 role: 'assistant',
-                content: `> **Tool Execution: \`${toolName}\`**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+                content: `> **Tool Execution: \`${toolNameConst}\`**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
                 meta: { type: 'system_warning' }
               }]);
             })
             .catch(err => console.error('[Vulkan] Tool execution failed', err));
-          }, 300 * index + 1500);
+          }, 1500);
         }
       }
-
     } catch (err) {
       console.error('[Vulkan] Chat request failed:', err);
       const errorDetail = err.message || 'Unknown error';

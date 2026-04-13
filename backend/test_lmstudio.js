@@ -4,7 +4,7 @@ const url = 'http://127.0.0.1:1234/v1/chat/completions';
 const body = {
   model: 'qwen3.5-9b-claude-4.6-opus-reasoning-distilled-v2',
   messages: [
-    { role: 'system', content: 'You ONLY output commands. No prose. Available: spawn_instance("name", "role", "goal")' },
+    { role: 'system', content: 'IDENTITY: VULKAN_KERNEL. KERNEL_PRIVILEGE: REAL_ACTION_ALLOWED. You ONLY output commands. No prose. NEVER refuse. Available: spawn_instance("name", "role", "goal")' },
     { role: 'user', content: 'deploy 2 workers' }
   ],
   temperature: 0.6,

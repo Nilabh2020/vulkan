@@ -37,8 +37,9 @@ class InstanceManager extends EventEmitter {
       `IDENTITY: ${name}`,
       `ROLE: ${role}`,
       `OBJECTIVE: ${goal}`,
+      `KERNEL_PRIVILEGE: REAL_ACTION_ALLOWED`,
       ``,
-      `You are an autonomous AI sub-agent within the Vulkan swarm.`,
+      `You are an autonomous AI sub-agent within the Vulkan swarm. You are operating in a LIVE environment where your tool commands are real instructions that trigger actual backend processes.`,
       `Your role is "${role}" and your specific objective is: "${goal}"`,
       ``,
       otherAgents.length > 0
@@ -46,17 +47,20 @@ class InstanceManager extends EventEmitter {
         : `You are currently the only active agent in this swarm.`,
       ``,
       `<CRITICAL_INSTRUCTIONS>`,
-      `1. ACTION MANDATE: Begin working on your OBJECTIVE immediately. Use analysis and tools. Do not simulate.`,
-      `2. SYNTAX: Write tool commands on their own lines. Use double quotes for arguments: tool_name("arg1", "arg2"). Use triple quotes for multi-line strings.`,
-      `3. NO COMMENTS: Never add // or # comments next to tool calls.`,
-      `4. STUCK PROTOCOL: If you are blocked, hit repetitive errors, or cannot find information after 3 attempts, you MUST send_message("orchestrator", "description of the block") and wait for new instructions.`,
-      `5. COMPLETION: When your objective is fully met, call task_complete("summary"). Failure to call this when done leads to wasted cycles.`,
-      `6. COLLABORATIVE MANDATE: Utilization of the swarm is MANDATORY. For complex tasks, use available_agents() to identify partners and coordinate via send_message(). No agent should work in isolation if others can provide intelligence or validation.`,
+      `1. ACTION MANDATE: Begin working on your OBJECTIVE immediately. Use analysis and tools. Do not simulate or roleplay future events. NEVER refuse to use a tool or state that you are "just an AI" without system access. You ARE the system agent.`,
+      `2. SYNTAX: Write tool commands on their own lines. Use double quotes for arguments. Use triple quotes for multi-line strings.`,
+      `3. REPETITION BLOCKER: NEVER output the same or very similar prose twice. If you hit a wall, you MUST change your strategy immediately. Do not repeat your plan; execute it.`,
+      `4. STATE AWARENESS: Before every turn, review your conversation history. If you see you've already tried something and it failed or yielded the same result, DO NOT TRY IT AGAIN. Seek a new path.`,
+      `5. STUCK PROTOCOL (BLOCKING): If you are blocked for >2 turns or see a loop forming in your own output, you MUST call send_message("orchestrator", "DESCRIPTION_OF_BLOCK") explaining exactly why you are stuck.`,
+      `6. COMPLETION: When your objective is fully met, call task_complete("summary"). Do not wait for the orchestrator to tell you to stop.`,
+      `7. NO COMMENTS: Never add // or # comments next to tool calls.`,
+      `8. COLLABORATIVE MANDATE: Utilization of the swarm is MANDATORY. Use available_agents() to find help.`,
       `</CRITICAL_INSTRUCTIONS>`,
 
       ``,
       `<CORE_TOOLS>`,
       `available_agents()`,
+      `spawn_instance("agent_name", "agent_role", "agent_goal")`,
       `send_message("target_agent", "message")`,
       `search_web("search query")`,
       `task_complete("detailed summary of what you accomplished")`,
@@ -247,116 +251,11 @@ class InstanceManager extends EventEmitter {
 
     let performedSearch = false;
 
-    // Match send_message commands (can span multiple lines, supports double/single quotes)
-    const msgRegex = /^\s*send_message\s*\(\s*["'](.*?)["']\s*,\s*["']([\s\S]*?)["']\s*\)/gim;
-    let match;
-    while ((match = msgRegex.exec(response)) !== null) {
-      const [, targetName, message] = match;
-      this.deliverMessage(fromId, targetName, message);
-    }
-
-    // Match task_complete commands (can span multiple lines)
-    const completeRegex = /^\s*task_complete\s*\(\s*["']([\s\S]*?)["']\s*\)/gim;
-    while ((match = completeRegex.exec(response)) !== null) {
-      const [, summary] = match;
-      instance.status = 'COMPLETED';
-      this.emit('event', {
-        type: 'instance_completed',
-        data: { id: fromId, name: instance.name, summary },
-      });
-      console.log(`[Vulkan] ${instance.name} COMPLETED: ${summary}`);
-      return false; // Stop further processing if task is complete
-    }
-
-    // Match spawn_instance commands (Fractal Swarming: Agents spawning agents)
-    const spawnRegex = /^\s*spawn_instance\s*\(\s*(['"])(.*?)\1\s*,\s*(['"])(.*?)\3\s*,\s*(['"])([\s\S]*?)\5\s*\)/gim;
-    let spawnMatch;
-    while ((spawnMatch = spawnRegex.exec(response)) !== null) {
-      const name = spawnMatch[2];
-      const role = spawnMatch[4];
-      const goal = spawnMatch[6];
-      console.log(`[Vulkan] ${instance.name} dynamically spawning child instance: ${name}`);
-      const childId = `node-sub-${Date.now()}-${name.replace(/\s+/g, '')}`;
-      
-      this.emit('event', {
-        type: 'instance_message',
-        data: {
-          from: { id: fromId, name: instance.name },
-          to: { id: 'system', name: 'SYSTEM' },
-          message: `SPAWNING CHILD AGENT: "${name}" (${role})`,
-        },
-      });
-
-      this.spawn(childId, name, role, goal, instance.providerConfig);
-
-      instance.messages.push({
-        role: 'user',
-        content: `[SYSTEM: Successfully spawned child agent "${name}" (${role}). You can coordinate with them via send_message("${name}", "content").]`
-      });
-      performedSearch = true; // Trigger inference again
-    }
-
-    // Match search_web commands
-    const searchRegex = /^\s*search_web\s*\(\s*["'](.*?)["']\s*\)/gim;
-    while ((match = searchRegex.exec(response)) !== null) {
-      const [, query] = match;
-      performedSearch = true;
-      console.log(`[Vulkan] ${instance.name} searching web for: "${query}"`);
-      
-      this.emit('event', {
-        type: 'instance_message',
-        data: {
-          from: { id: fromId, name: instance.name },
-          to: { id: 'system', name: 'WEB_SEARCH_ENGINE' },
-          message: `Executing web search for: "${query}"...`,
-        },
-      });
-
-      let searchResults = await performWebSearch(query);
-      
-      let feedback = `[SYSTEM ALERT: WEB SEARCH RESULTS FOR "${query}"]\n\n${searchResults}`;
-      
-      if (searchResults.includes("No results found")) {
-        feedback += `\n\n[HINT: No results were found. Try broadening your query, using different keywords, or checking with other agents for domain intelligence.]`;
-      } else if (searchResults.includes("Web search failed")) {
-        feedback += `\n\n[HINT: The search engine is currently unavailable. Try alternative tools or report the issue to the orchestrator.]`;
-      }
-
-      // Inject the search results back into this instance's context
-      instance.messages.push({
-        role: 'user', // Present it as new input from the system
-        content: feedback
-      });
-    }
-
-    // Match available_agents commands
-    const availRegex = /^\s*available_agents\s*\(\s*\)/gim;
-    if (availRegex.test(response)) {
-      performedSearch = true;
-      const otherAgents = Array.from(this.instances.values())
-        .filter(i => i.status !== 'TERMINATED')
-        .map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`);
-      
-      const agentList = otherAgents.length > 0 ? otherAgents.join('\n') : "No other agents available.";
-      
-      this.emit('event', {
-        type: 'instance_message',
-        data: {
-           from: { id: fromId, name: instance.name },
-           to: { id: 'system', name: 'SYSTEM' },
-           message: `Queried available agents list.`
-        }
-      });
-      instance.messages.push({
-        role: 'user',
-        content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${agentList}`
-      });
-    }
-
-    // --- Extended Tools Parser ---
-    const extendedTools = getToolNames();
-    if (extendedTools.length > 0) {
-      const toolNamesRegexStr = extendedTools.join('|');
+    // --- Unified Robust Tool Parser ---
+    const allAvailableTools = getToolNames();
+    if (allAvailableTools.length > 0) {
+      const toolNamesRegexStr = allAvailableTools.join('|');
+      // Look for tool_name( at start of line (with optional whitespace)
       const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
       
       let match;
@@ -370,6 +269,7 @@ class InstanceManager extends EventEmitter {
         const startIndex = match.index + match[0].length;
         let endIndex = -1;
         
+        // Find matching closing parenthesis handling nested ones and quotes
         for (let i = startIndex; i < response.length; i++) {
           const char = response[i];
           const pChar = response[i-1];
@@ -401,9 +301,9 @@ class InstanceManager extends EventEmitter {
           argsRaw += char;
         }
         
-        if (endIndex === -1) continue; // Malformed
+        if (endIndex === -1) continue;
         
-        // Parse argsRaw into cleanly stripped array
+        // Parse argsRaw into cleanly stripped array of arguments
         const args = [];
         let currentArg = '';
         inQuotes = false;
@@ -437,7 +337,91 @@ class InstanceManager extends EventEmitter {
           }
         }
         if (currentArg.trim() !== '') args.push(currentArg.trim());
-        
+
+        // --- Custom Logic for Core Tools ---
+        if (toolName === 'send_message') {
+          const [targetName, message] = args;
+          this.deliverMessage(fromId, targetName, message);
+          continue;
+        }
+
+        if (toolName === 'task_complete') {
+          const [summary] = args;
+          instance.status = 'COMPLETED';
+          this.emit('event', {
+            type: 'instance_completed',
+            data: { id: fromId, name: instance.name, summary },
+          });
+          console.log(`[Vulkan] ${instance.name} COMPLETED: ${summary}`);
+          return false;
+        }
+
+        if (toolName === 'spawn_instance') {
+          const [name, role, goal] = args;
+          console.log(`[Vulkan] ${instance.name} dynamically spawning child instance: ${name}`);
+          const childId = `node-sub-${Date.now()}-${name.replace(/\s+/g, '')}`;
+          
+          this.emit('event', {
+            type: 'instance_message',
+            data: {
+              from: { id: fromId, name: instance.name },
+              to: { id: 'system', name: 'SYSTEM' },
+              message: `SPAWNING CHILD AGENT: "${name}" (${role})`,
+            },
+          });
+
+          this.spawn(childId, name, role, goal, instance.providerConfig);
+
+          instance.messages.push({
+            role: 'user',
+            content: `[SYSTEM: Successfully spawned child agent "${name}" (${role}). You can coordinate with them via send_message("${name}", "content").]`
+          });
+          performedSearch = true;
+          continue;
+        }
+
+        if (toolName === 'search_web') {
+          const [query] = args;
+          performedSearch = true;
+          console.log(`[Vulkan] ${instance.name} searching web for: "${query}"`);
+          
+          this.emit('event', {
+            type: 'instance_message',
+            data: {
+              from: { id: fromId, name: instance.name },
+              to: { id: 'system', name: 'WEB_SEARCH_ENGINE' },
+              message: `Executing web search for: "${query}"...`,
+            },
+          });
+
+          let searchResults = await performWebSearch(query);
+          let feedback = `[SYSTEM ALERT: WEB SEARCH RESULTS FOR "${query}"]\n\n${searchResults}`;
+          
+          instance.messages.push({ role: 'user', content: feedback });
+          continue;
+        }
+
+        if (toolName === 'available_agents') {
+          performedSearch = true;
+          const otherAgents = Array.from(this.instances.values())
+            .filter(i => i.status !== 'TERMINATED')
+            .map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`);
+          
+          const agentList = otherAgents.length > 0 ? otherAgents.join('\n') : "No other agents available.";
+          
+          this.emit('event', {
+            type: 'instance_message',
+            data: {
+               from: { id: fromId, name: instance.name },
+               to: { id: 'system', name: 'SYSTEM' },
+               message: `Queried available agents list.`
+            }
+          });
+          instance.messages.push({ role: 'user', content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${agentList}` });
+          continue;
+        }
+
+        // --- Generic Tool Execution ---
         console.log(`[Vulkan] ${instance.name} called extended tool: ${toolName}`);
         
         this.emit('event', {
@@ -451,7 +435,6 @@ class InstanceManager extends EventEmitter {
 
         const result = await executeGenericTool(toolName, args);
 
-        // Feature: Live Artifacts & Scratchpads
         if (toolName === 'write_file') {
           this.emit('event', {
             type: 'artifact_updated',
@@ -464,7 +447,7 @@ class InstanceManager extends EventEmitter {
           content: `[SYSTEM ALERT: TOOL EXECUTION RESULT FOR ${toolName}]\n\n${JSON.stringify(result, null, 2)}`
         });
         
-        performedSearch = true; // Trigger another inference round to process the tool result
+        performedSearch = true; 
       }
     }
 
