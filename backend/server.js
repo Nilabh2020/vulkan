@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import chatRouter from './routes/chat.js';
 import instanceRouter from './routes/instances.js';
+import blueprintsRouter from './routes/blueprints.js';
 import { executeGenericTool, getToolNames, getAllTools } from './toolRegistry.js';
 
 dotenv.config();
@@ -134,6 +135,4 @@ app.use('/api/blueprints', blueprintsRouter);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Vulkan Backend] Server running on http://0.0.0.0:${PORT}`);
-});
-);
 });
