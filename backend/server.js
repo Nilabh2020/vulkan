@@ -130,7 +130,10 @@ app.post('/api/models', async (req, res) => {
 
 app.use('/api/chat', chatRouter);
 app.use('/api/instances', instanceRouter);
+app.use('/api/blueprints', blueprintsRouter);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Vulkan Backend] Server running on http://0.0.0.0:${PORT}`);
+});
+);
 });

@@ -1,0 +1,73 @@
+[
+  {
+    "id": "software_dev_team",
+    "name": "💻 Standard Software Team",
+    "description": "A classic 3-agent development team (Planner, Coder, QA).",
+    "agents": [
+      {
+        "name": "planner",
+        "role": "project_manager",
+        "goal": "Analyze the user's request, create a step-by-step implementation plan, and assign tasks to the coder."
+      },
+      {
+        "name": "coder",
+        "role": "software_engineer",
+        "goal": "Write the actual code based on the planner's instructions using write_file()."
+      },
+      {
+        "name": "qa_tester",
+        "role": "quality_assurance",
+        "goal": "Review the code written by the coder, identify bugs, and suggest improvements."
+      }
+    ]
+  },
+  {
+    "id": "neuronix_15_agent",
+    "name": "🚀 Neuronix SaaS Team (15 Agents)",
+    "description": "The massive 15-agent swarm for building a complete SaaS platform in parallel.",
+    "agents": [
+      { "name": "planner", "role": "planner", "goal": "Create architecture, define folder structure, break work into tasks, and assign tasks to all agents." },
+      { "name": "ui_designer", "role": "ui_designer", "goal": "Design glassmorphism cards, animated hero section, scroll animations, gradient blobs, pricing toggle, loading skeletons." },
+      { "name": "frontend_architect", "role": "frontend_architect", "goal": "Setup React + Vite + Tailwind + Framer Motion structure." },
+      { "name": "backend_architect", "role": "backend_architect", "goal": "Setup Node.js + Express REST API structure." },
+      { "name": "component_engineer", "role": "component_engineer", "goal": "Build React components for Home, Features, Pricing, Blog, Contact, Dashboard." },
+      { "name": "animation_engineer", "role": "animation_engineer", "goal": "Implement Framer Motion animations across components." },
+      { "name": "api_engineer", "role": "api_engineer", "goal": "Build Express routes for contact form and blog markdown loader." },
+      { "name": "database_engineer", "role": "database_engineer", "goal": "Setup mock database structure and JWT authentication." },
+      { "name": "auth_security_engineer", "role": "auth_security_engineer", "goal": "Implement Login/Register and protected dashboard routes." },
+      { "name": "devops_engineer", "role": "devops_engineer", "goal": "Setup npm init, package.json, and basic infrastructure." },
+      { "name": "performance_engineer", "role": "performance_engineer", "goal": "Audit and optimize frontend and backend performance." },
+      { "name": "qa_tester", "role": "qa_tester", "goal": "Test all features, find bugs, and report issues." },
+      { "name": "bug_fixer", "role": "bug_fixer", "goal": "Fix bugs reported by qa_tester." },
+      { "name": "accessibility_auditor", "role": "accessibility_auditor", "goal": "Ensure accessibility compliance (ARIA labels, color contrast, keyboard navigation)." },
+      { "name": "final_reviewer", "role": "final_reviewer", "goal": "Verify full project, confirm production readiness, provide launch checklist, run verify_filesystem()." }
+    ]
+  },
+  {
+    "id": "research_team",
+    "name": "🔍 Deep Research Swarm",
+    "description": "A team of agents designed to scrape the web and synthesize reports.",
+    "agents": [
+      {
+        "name": "research_lead",
+        "role": "research_director",
+        "goal": "Break down the research topic and assign specific search queries to the web searchers."
+      },
+      {
+        "name": "searcher_1",
+        "role": "web_scraper",
+        "goal": "Use search_web() to find primary sources and data."
+      },
+      {
+        "name": "searcher_2",
+        "role": "web_scraper",
+        "goal": "Use search_web() to find secondary sources and counter-arguments."
+      },
+      {
+        "name": "synthesizer",
+        "role": "report_writer",
+        "goal": "Compile all findings from the searchers into a comprehensive Markdown report using write_file()."
+      }
+    ]
+  }
+]

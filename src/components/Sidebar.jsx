@@ -1,8 +1,16 @@
-import React, { useState } from 'react';
-import { Play, Plus, StopCircle, RefreshCw, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Plus, StopCircle, RefreshCw, Download, Layers } from 'lucide-react';
 
-const Sidebar = ({ onSpawnAgent, onReset, onExport, onTerminate }) => {
+const Sidebar = ({ onSpawnAgent, onSpawnBlueprint, onReset, onExport, onTerminate }) => {
   const [prompt, setPrompt] = useState('');
+  const [blueprints, setBlueprints] = useState([]);
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:3001/api/blueprints')
+      .then(res => res.json())
+      .then(data => setBlueprints(data))
+      .catch(e => console.error('[Vulkan] Failed to load blueprints:', e));
+  }, []);
 
   return (
     <div style={styles.container} className="panel">
@@ -21,6 +29,7 @@ const Sidebar = ({ onSpawnAgent, onReset, onExport, onTerminate }) => {
         <button 
           style={styles.primaryBtn}
           onClick={() => {
+            if (!prompt.trim()) return;
             onSpawnAgent('VULKAN_ROOT', prompt, 'root');
             setPrompt('');
           }}
@@ -36,26 +45,20 @@ const Sidebar = ({ onSpawnAgent, onReset, onExport, onTerminate }) => {
       </div>
 
       <div style={styles.section}>
-        <h3 style={styles.title} className="text-glow">SWARM PRESETS</h3>
+        <h3 style={styles.title} className="text-glow">SWARM BLUEPRINTS</h3>
         <div style={styles.presetGrid}>
-          <button 
-            style={styles.presetBtn} 
-            onClick={() => setPrompt("Deploy a Software Development Team: spawn one 'Lead Developer' to write code, one 'QA Tester' to review code, and one 'Technical Writer' to document it.")}
-          >
-            💻 Software Dev Team
-          </button>
-          <button 
-            style={styles.presetBtn} 
-            onClick={() => setPrompt("Deploy a Web Research Team: spawn an 'Info Gatherer' to search the web, and a 'Data Analyst' to compile and summarize the findings.")}
-          >
-            🔍 Web Research Team
-          </button>
-          <button 
-            style={styles.presetBtn} 
-            onClick={() => setPrompt("Deploy a Cybersecurity Auditing Team: spawn a 'Vulnerability Scanner' to scan code, and a 'Report Generator' to write the audit.")}
-          >
-            🛡️ Security Audit Team
-          </button>
+          {blueprints.length > 0 ? blueprints.map(bp => (
+            <button 
+              key={bp.id}
+              style={styles.presetBtn} 
+              onClick={() => onSpawnBlueprint(bp)}
+              title={bp.description}
+            >
+              <Layers size={14} /> {bp.name}
+            </button>
+          )) : (
+            <div style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>No blueprints loaded.</div>
+          )}
         </div>
       </div>
 
