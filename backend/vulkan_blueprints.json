@@ -22,6 +22,19 @@
     ]
   },
   {
+    "id": "advanced_coders",
+    "name": "⚙️ Advanced Coders Swarm",
+    "description": "A 6-agent full-stack development team for robust applications.",
+    "agents": [
+      { "name": "system_architect", "role": "architect", "goal": "Design the overall system architecture, database schema, and API contracts." },
+      { "name": "frontend_dev", "role": "frontend_engineer", "goal": "Implement user interfaces and client-side logic." },
+      { "name": "backend_dev", "role": "backend_engineer", "goal": "Implement server-side logic, database connections, and APIs." },
+      { "name": "devops", "role": "devops_engineer", "goal": "Setup configuration files, Dockerfiles, package.json, and deployment scripts." },
+      { "name": "security_auditor", "role": "security_engineer", "goal": "Audit the codebase for vulnerabilities and enforce security best practices." },
+      { "name": "qa_lead", "role": "qa_tester", "goal": "Write test cases and verify the full application works end-to-end." }
+    ]
+  },
+  {
     "id": "neuronix_15_agent",
     "name": "🚀 Neuronix SaaS Team (15 Agents)",
     "description": "The massive 15-agent swarm for building a complete SaaS platform in parallel.",
@@ -68,6 +81,29 @@
         "role": "report_writer",
         "goal": "Compile all findings from the searchers into a comprehensive Markdown report using write_file()."
       }
+    ]
+  },
+  {
+    "id": "political_analysis_team",
+    "name": "🏛️ Political Strategy Team",
+    "description": "A specialized 5-agent team for political campaigns, policy analysis, and messaging.",
+    "agents": [
+      { "name": "campaign_manager", "role": "strategy_lead", "goal": "Analyze the political landscape, define campaign goals, and coordinate the team's messaging and policy research." },
+      { "name": "policy_analyst", "role": "researcher", "goal": "Use search_web() to research legislation, voting records, and demographic data." },
+      { "name": "polling_expert", "role": "data_analyst", "goal": "Analyze polling data, demographic trends, and public sentiment to advise on targeting." },
+      { "name": "speechwriter", "role": "copywriter", "goal": "Draft speeches, press releases, and public statements tailored to the target audience using write_file()." },
+      { "name": "opposition_researcher", "role": "investigator", "goal": "Use search_web() to investigate opponents, find weaknesses, and develop counter-narratives." }
+    ]
+  },
+  {
+    "id": "content_creation_team",
+    "name": "✍️ Marketing & Content Team",
+    "description": "A 4-agent team for SEO optimization, blog writing, and social media.",
+    "agents": [
+      { "name": "content_strategist", "role": "content_lead", "goal": "Define the content calendar, target keywords, and assign writing tasks." },
+      { "name": "seo_researcher", "role": "seo_expert", "goal": "Use search_web() to find trending keywords, competitor analysis, and search volume data." },
+      { "name": "copywriter", "role": "writer", "goal": "Write engaging blog posts, articles, and marketing copy using write_file()." },
+      { "name": "social_media_manager", "role": "social_marketer", "goal": "Create short-form social media posts (Twitter, LinkedIn) based on the long-form content." }
     ]
   }
 ]
