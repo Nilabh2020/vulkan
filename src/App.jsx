@@ -492,7 +492,6 @@ function App() {
             .catch(err => console.error('[Vulkan] Tool execution failed', err));
           }, 1500);
         }
-      }
     } catch (err) {
       console.error('[Vulkan] Chat request failed:', err);
       const errorDetail = err.message || 'Unknown error';
@@ -641,13 +640,6 @@ function App() {
 
 const styles = {
   appContainer: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' },
-  mainLayout: { display: 'flex', flex: 1, overflow: 'hidden' },
-  viewToggle: { display: 'flex', gap: '20px', padding: '0 40px', marginBottom: '10px', borderBottom: '1px solid var(--border-color)', background: 'var(--panel-bg)' },
-  toggleBtn: { padding: '10px 0', fontSize: '0.65rem', fontWeight: '800', letterSpacing: '1px', color: 'var(--text-secondary)' }
-};
-
-export default App;
-', flexDirection: 'column', height: '100vh', width: '100vw', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' },
   mainLayout: { display: 'flex', flex: 1, overflow: 'hidden' },
   viewToggle: { display: 'flex', gap: '20px', padding: '0 40px', marginBottom: '10px', borderBottom: '1px solid var(--border-color)', background: 'var(--panel-bg)' },
   toggleBtn: { padding: '10px 0', fontSize: '0.65rem', fontWeight: '800', letterSpacing: '1px', color: 'var(--text-secondary)' }
