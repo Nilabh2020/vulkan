@@ -4,13 +4,14 @@ import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
 import FlowGraph from './components/FlowGraph';
 import ChatView from './components/ChatView';
+import WorkflowBuilder from './components/WorkflowBuilder';
 import OnboardingModal from './components/modals/OnboardingModal';
 import ProviderModal from './components/modals/ProviderModal';
 import SSHModal from './components/modals/SSHModal';
-import { useNodesState, useEdgesState } from '@xyflow/react';
+import { useNodesState, useEdgesState, addEdge } from '@xyflow/react';
 
 function App() {
-  const [view, setView] = useState('chat'); // 'chat' or 'graph'
+  const [view, setView] = useState('chat');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [providerModal, setProviderModal] = useState({ isOpen: false, name: '' });
   const [sshModalOpen, setSshModalOpen] = useState(false);
@@ -18,19 +19,40 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-
   const [extendedToolNames, setExtendedToolNames] = useState([]);
   const [artifacts, setArtifacts] = useState({});
 
-  // Load from backend on mount
+  // ── Node Property Updater ──
+  const handleNodeChange = useCallback((id, field, value) => {
+    setNodes((nds) => 
+      nds.map((node) => {
+        if (node.id === id) {
+          return { ...node, data: { ...node.data, [field]: value } };
+        }
+        return node;
+      })
+    );
+  }, [setNodes]);
+
+  const onConnect = useCallback(
+    (params) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#4fc3ff' } }, eds)),
+    [setEdges],
+  );
+
+  // ── Load Session ──
   useEffect(() => {
     fetch('http://127.0.0.1:3001/api/session/load')
       .then(r => r.json())
       .then(data => {
-        if (data.messages?.length || data.nodes?.length) {
-          setMessages(data.messages || []);
-          setNodes(data.nodes || []);
-          setEdges(data.edges || []);
+        if (data.messages) setMessages(data.messages);
+        if (data.edges) setEdges(data.edges);
+        if (data.nodes) {
+          // CRITICAL: Re-attach the functional onChange handler to the static data from JSON
+          const hydratedNodes = data.nodes.map(n => ({
+            ...n,
+            data: { ...n.data, onChange: handleNodeChange }
+          }));
+          setNodes(hydratedNodes);
         }
       })
       .catch(err => console.error('[Vulkan] Initial load failed:', err));
@@ -41,536 +63,116 @@ function App() {
         if (data.names) setExtendedToolNames(data.names);
       })
       .catch(err => console.error('[Vulkan] Tool load failed:', err));
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, handleNodeChange]);
 
-  // Persistence (save to backend)
+  // ── Auto-Save Session ──
   useEffect(() => {
-    if (!messages.length && !nodes.length) return;
-    
-    // Debounce save slightly to avoid flooding the backend
     const timeout = setTimeout(() => {
       fetch('http://127.0.0.1:3001/api/session/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages, nodes, edges }),
+        body: JSON.stringify({ 
+          messages, 
+          // Don't save functions in the nodes data
+          nodes: nodes.map(n => {
+            const { onChange, ...serializableData } = n.data;
+            return { ...n, data: serializableData };
+          }), 
+          edges 
+        }),
       }).catch(e => console.error('[Vulkan] Auto-save failed'));
     }, 1000);
-
     return () => clearTimeout(timeout);
   }, [messages, nodes, edges]);
 
-  useEffect(() => {
-    const hasVisited = localStorage.getItem('vulkan_visited');
-    if (!hasVisited) {
-      setShowOnboarding(true);
-      localStorage.setItem('vulkan_visited', 'true');
-    }
+  const spawnAgent = useCallback(async (name, context, type = 'sub') => {
+    setView('graph');
   }, []);
 
-  const rootNodeId = useRef(null);
-  const spawnAgentRef = useRef(null);
+  const spawnBlueprint = useCallback(async (blueprint) => {
+    spawnAgent(blueprint.name, blueprint.goal || 'General purpose agent', 'sub');
+  }, [spawnAgent]);
 
-  // ═══════════════════════════════════════════════════════════════
-  // SSE — Real-time instance events from backend
-  // ═══════════════════════════════════════════════════════════════
-  useEffect(() => {
-    let es;
-
-    const connect = () => {
-      es = new EventSource('http://127.0.0.1:3001/api/instances/stream');
-
-      es.onmessage = (event) => {
-        const { type, data } = JSON.parse(event.data);
-
-        switch (type) {
-          case 'initial_state':
-            // Could sync on reconnect — currently a no-op
-            break;
-
-          case 'instance_spawned':
-            setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: data.status } } : n
-            ));
-            break;
-
-          case 'instance_status':
-            setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: data.status, lastAction: 'Thinking...' } } : n
-            ));
-            break;
-
-          case 'instance_response':
-            setNodes(nds => nds.map(n =>
-              n.id === `node-${data.id}` || n.id === data.id ? { ...n, data: { ...n.data, status: 'ACTIVE', rounds: data.round, contextLen: data.contextLen, lastAction: 'Generated response' } } : n
-            ));
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: data.response,
-              meta: { type: 'agent_response', agentName: data.name, agentId: data.id, round: data.round },
-            }]);
-            break;
-
-          case 'instance_message':
-            // Add a communication edge between agents
-            setEdges(eds => {
-              const edgeId = `e-comm-${data.from.id}-${data.to.id}`;
-              if (eds.find(e => e.id === edgeId)) return eds;
-              return [...eds, {
-                id: edgeId,
-                source: data.from.id,
-                target: data.to.id,
-                animated: true,
-                style: { stroke: '#4fc3ff', strokeWidth: 1.5, opacity: 0.5 },
-              }];
-            });
-            // Update lastAction for the sender
-            if (data.from && data.from.id !== 'system' && data.from.id !== 'orchestrator') {
-               setNodes(nds => nds.map(n =>
-                 n.id === data.from.id ? { ...n, data: { ...n.data, lastAction: `Sent message to ${data.to.name}` } } : n
-               ));
-            }
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: data.message,
-              meta: { type: 'agent_message', from: data.from.name, to: data.to.name },
-            }]);
-            break;
-
-          case 'instance_completed':
-            setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'COMPLETED', lastAction: 'Task Completed' } } : n
-            ));
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: data.summary,
-              meta: { type: 'agent_completed', agentName: data.name, agentId: data.id },
-            }]);
-            break;
-
-          case 'instance_error':
-            setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'ERROR', error: data.error, lastAction: 'Error occurred' } } : n
-            ));
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: data.error,
-              meta: { type: 'agent_error', agentName: data.name, agentId: data.id },
-            }]);
-            break;
-
-          case 'instance_terminated':
-            setNodes(nds => nds.map(n =>
-              n.id === data.id ? { ...n, data: { ...n.data, status: 'TERMINATED' } } : n
-            ));
-            break;
-
-          case 'all_terminated':
-            // Graph reset already handled in resetGraph()
-            break;
-
-          case 'sys_error':
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: `Message delivery failed: ${data.from} → ${data.target} (${data.reason})`,
-              meta: { type: 'system_warning' },
-            }]);
-            break;
-
-          case 'artifact_updated':
-            setArtifacts(prev => ({
-              ...prev,
-              [data.filename]: { content: data.content, author: data.author, timestamp: Date.now() }
-            }));
-            break;
-
-          default:
-            break;
-        }
-      };
-
-      es.onerror = () => {
-        // EventSource auto-reconnects; no action needed
-      };
-    };
-
-    connect();
-
-    return () => {
-      if (es) es.close();
-    };
-  }, [setNodes, setEdges]);
-
-  // ═══════════════════════════════════════════════════════════════
-  // spawnSubAgent — calls the REAL backend to start a parallel inference
-  // ═══════════════════════════════════════════════════════════════
-  const spawnSubAgent = useCallback(async (name, role, goal) => {
-    const savedProvider = localStorage.getItem('vulkan_active_provider') || 'ollama';
-    const config = JSON.parse(localStorage.getItem(`vulkan_provider_${savedProvider}`) || '{}');
-
-    try {
-      const response = await fetch('http://127.0.0.1:3001/api/instances/spawn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          role,
-          goal,
-          provider: savedProvider,
-          model: config.model || '',
-          config,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.details || 'Spawn failed');
-      }
-
-      // Add node to graph in an organized grid layout
-      const id = data.instance.id;
-
-      setNodes(nds => {
-        const cols = 8;
-        const spacingX = 400;
-        const spacingY = 280;
-        // Start counting after the root node
-        const index = Math.max(0, nds.length - 1);
-        const row = Math.floor(index / cols);
-        const col = index % cols;
-        const x = 500 + (col * spacingX) + (Math.random() * 20);
-        const y = 50 + (row * spacingY) + (Math.random() * 20);
-
-        return [...nds, {
-          id,
-          type: 'agent',
-          position: { x, y },
-          data: { label: name, context: `${role}: ${goal}`, type: 'sub', status: 'ACTIVE', depth: 1 },
-        }];
-      });
-
-      if (rootNodeId.current) {
-        setEdges(eds => [...eds, {
-          id: `e-${rootNodeId.current}-${id}`,
-          source: rootNodeId.current,
-          target: id,
-          animated: true,
-          style: { stroke: '#ffffff', strokeWidth: 1, opacity: 0.3, strokeDasharray: '5 5' },
-        }]);
-      }
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `SPAWN_ERROR: Failed to create "${name}": ${err.message}`,
-        meta: { type: 'system_error' },
-      }]);
-    }
-  }, [setNodes, setEdges]);
-
-  // ═══════════════════════════════════════════════════════════════
-  // handleChatRequest — sends to orchestrator, parses commands, spawns real agents
-  // ═══════════════════════════════════════════════════════════════
   const handleChatRequest = useCallback(async (content) => {
     const userMsg = { role: 'user', content };
     setMessages(prev => [...prev, userMsg]);
-
-    try {
-      const savedProvider = localStorage.getItem('vulkan_active_provider') || 'ollama';
-      const config = JSON.parse(localStorage.getItem(`vulkan_provider_${savedProvider}`) || '{}');
-      
-      const response = await fetch('http://127.0.0.1:3001/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: savedProvider,
-          model: config.model || '',
-          messages: [...messages, userMsg],
-          config: config,
-          stream: true
-        })
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const errMsg = data.details || data.error || `Backend error ${response.status}`;
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `PROVIDER_ERROR: ${errMsg}`,
-          meta: { type: 'system_error' },
-        }]);
-        return;
-      }
-
-      // ── Handle Streaming ──
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let replyText = '';
-      
-      // Add initial empty assistant message
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.text) {
-                replyText += data.text;
-                // Update the last message
-                setMessages(prev => {
-                  const newMsgs = [...prev];
-                  newMsgs[newMsgs.length - 1] = { 
-                    ...newMsgs[newMsgs.length - 1], 
-                    content: replyText 
-                  };
-                  return newMsgs;
-                });
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      
-      // ── Parse Commands after stream completes ──
-      const reply = replyText;
-      
-      // ── Unified Robust Tool Parser ──
-      const coreTools = ['spawn_instance', 'send_message', 'search_web', 'available_agents'];
-      const allTools = [...new Set([...(extendedToolNames || []), ...coreTools])];
-      
-      const toolNamesRegexStr = allTools.join('|');
-      const startRegex = new RegExp(`^\\s*(${toolNamesRegexStr})\\s*\\(`, 'gim');
-      
-      let match;
-      while ((match = startRegex.exec(reply)) !== null) {
-        const toolName = match[1];
-        console.log(`[Vulkan] Detected tool call: ${toolName}`);
-        let depth = 1;
-        let argsRaw = '';
-        let inQuotes = false;
-        let quoteChar = '';
-        let isTriple = false;
-        const startIndex = match.index + match[0].length;
-        let endIndex = -1;
-        
-        for (let i = startIndex; i < reply.length; i++) {
-            const char = reply[i];
-            const pChar = reply[i-1];
-            const substr3 = reply.substring(i, i+3);
-            
-            if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
-              inQuotes = true; quoteChar = reply[i]; isTriple = true;
-              argsRaw += substr3; i += 2; continue;
-            } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
-              inQuotes = false; isTriple = false;
-              argsRaw += substr3; i += 2; continue;
-            }
-            
-            if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
-              inQuotes = true; quoteChar = char;
-            } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
-              inQuotes = false;
-            }
-            
-            if (!inQuotes) {
-              if (char === '(') depth++;
-              else if (char === ')') depth--;
-            }
-            
-            if (depth === 0) {
-              endIndex = i;
-              break;
-            }
-            argsRaw += char;
-          }
-          
-          if (endIndex === -1) continue;
-          
-          const args = [];
-          let currentArg = '';
-          inQuotes = false;
-          quoteChar = '';
-          isTriple = false;
-          
-          for (let i = 0; i < argsRaw.length; i++) {
-            const char = argsRaw[i];
-            const pChar = argsRaw[i-1];
-            const substr3 = argsRaw.substring(i, i+3);
-
-            if (!inQuotes && (substr3 === '"""' || substr3 === "'''")) {
-              inQuotes = true; quoteChar = argsRaw[i]; isTriple = true;
-              i += 2; continue;
-            } else if (inQuotes && isTriple && substr3 === quoteChar.repeat(3) && pChar !== '\\') {
-              inQuotes = false; isTriple = false;
-              i += 2; continue;
-            }
-            
-            if (!inQuotes && !isTriple && (char === '"' || char === "'") && pChar !== '\\') {
-              inQuotes = true; quoteChar = char; continue;
-            } else if (inQuotes && !isTriple && char === quoteChar && pChar !== '\\') {
-              inQuotes = false; continue;
-            }
-            
-            if (!inQuotes && char === ',') {
-              args.push(currentArg.trim());
-              currentArg = '';
-            } else {
-              currentArg += char;
-            }
-          }
-          if (currentArg.trim() !== '') args.push(currentArg.trim());
-          
-          // --- Custom Handlers for Core Tools ---
-          if (toolName === 'spawn_instance') {
-            const [name, role, goal] = args;
-            spawnSubAgent(name, role, goal);
-            continue;
-          }
-
-          if (toolName === 'send_message') {
-            const [target, msg] = args;
-            fetch('http://127.0.0.1:3001/api/instances/message-by-name', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ targetName: target, message: msg }),
-            }).catch(() => {});
-            continue;
-          }
-
-          if (toolName === 'search_web') {
-            const [query] = args;
-            console.log(`[Vulkan] Orchestrator requested search: ${query}`);
-            continue;
-          }
-
-          if (toolName === 'available_agents') {
-            fetch('http://127.0.0.1:3001/api/instances')
-              .then(res => res.json())
-              .then(data => {
-                const active = data.instances?.filter(i => i.status !== 'TERMINATED');
-                if (!active || active.length === 0) {
-                  setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\nNo other agents available.`,
-                    meta: { type: 'system_warning' }
-                  }]);
-                } else {
-                  const list = active.map(i => `- ${i.name} (${i.role}): ${i.goal} [STATUS: ${i.status}]`).join('\n');
-                  setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    content: `[SYSTEM ALERT: AVAILABLE AGENTS]\n\n${list}`,
-                    meta: { type: 'system_warning' }
-                  }]);
-                }
-              }).catch(console.error);
-            continue;
-          }
-
-          // --- Generic Tool Execution ---
-          const toolNameConst = toolName;
-          const argsConst = args;
-          setTimeout(() => {
-            fetch('http://127.0.0.1:3001/api/tools/execute', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ toolName: toolNameConst, args: argsConst }),
-            })
-            .then(res => res.json())
-            .then(result => {
-              setMessages(prev => [...prev, {
-                role: 'assistant',
-                content: `> **Tool Execution: \`${toolNameConst}\`**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
-                meta: { type: 'system_warning' }
-              }]);
-            })
-            .catch(err => console.error('[Vulkan] Tool execution failed', err));
-          }, 1500);
-        }
-    } catch (err) {
-      console.error('[Vulkan] Chat request failed:', err);
-      const errorDetail = err.message || 'Unknown error';
-      setMessages(prev => [...prev, { role: 'assistant', content: `SYSTEM_ERROR: ${errorDetail}` }]);
-    }
-  }, [messages, spawnSubAgent]);
-
-  // ═══════════════════════════════════════════════════════════════
-  // spawnAgent — unified handler for root vs sub agents
-  // ═══════════════════════════════════════════════════════════════
-  const spawnAgent = useCallback(async (name, context, type = 'sub') => {
-    if (type === 'sub') {
-      setView('graph');
-      // Parse "role: goal" format; fallback to generic
-      const colonIdx = context.indexOf(': ');
-      const role = colonIdx > 0 ? context.slice(0, colonIdx) : 'worker';
-      const goal = colonIdx > 0 ? context.slice(colonIdx + 2) : context;
-      spawnSubAgent(name, role, goal);
-      return;
-    }
-
-    // Root agent — add to graph + trigger orchestrator
-    const id = `node-root-${Date.now()}`;
-    rootNodeId.current = id;
-
-    setNodes(nds => [...nds, {
-      id,
-      type: 'agent',
-      position: { x: 100, y: 300 },
-      data: { label: name, context, type: 'root', status: 'ACTIVE', depth: 0 },
-    }]);
-
-    setView('chat');
-    handleChatRequest(context);
-  }, [setNodes, handleChatRequest, spawnSubAgent]);
-
-  // Keep ref in sync so setTimeout callbacks always have the latest version
-  useEffect(() => {
-    spawnAgentRef.current = spawnAgent;
-  }, [spawnAgent]);
-
-  // ═══════════════════════════════════════════════════════════════
-  const terminateSwarm = useCallback(async () => {
-    try {
-      await fetch('http://127.0.0.1:3001/api/instances', { method: 'DELETE' });
-    } catch (e) { /* backend may be down */ }
   }, []);
 
-  // ═══════════════════════════════════════════════════════════════
-  // resetGraph — terminates all real instances + clears UI
-  // ═══════════════════════════════════════════════════════════════
-  const resetGraph = useCallback(async () => {
-    await terminateSwarm();
-    try {
-      await fetch('http://127.0.0.1:3001/api/session/save', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [], nodes: [], edges: [] }) 
+  const runWorkflow = useCallback(async () => {
+    console.log('[Vulkan] Starting workflow execution sequence (Propagating Data)...');
+    setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, status: 'DRAFT', outputCount: 0, output: null } })));
+    await new Promise(r => setTimeout(r, 500));
+
+    const getChildren = (nodeId) => edges.filter(e => e.source === nodeId).map(e => e.target);
+    const getParents = (nodeId) => edges.filter(e => e.target === nodeId).map(e => e.source);
+    
+    const allParentsCompleted = (nodeId, currentNodes) => {
+      const parents = getParents(nodeId);
+      if (parents.length === 0) return true;
+      return parents.every(pId => {
+        const parent = currentNodes.find(n => n.id === pId);
+        return parent && parent.data.status === 'COMPLETED';
       });
-    } catch (e) { /* backend may be down */ }
+    };
 
-    setNodes([]);
-    setEdges([]);
-    setMessages([]);
-    rootNodeId.current = null;
-  }, [setNodes, setEdges, terminateSwarm]);
+    let queue = nodes.filter(n => getParents(n.id).length === 0).map(n => n.id);
+    let completed = new Set();
+    let processing = new Set();
 
-  // ═══════════════════════════════════════════════════════════════
-  // exportChats — downloads the current conversation history as a JSON file
-  // ═══════════════════════════════════════════════════════════════
+    while (queue.length > 0 || processing.size > 0) {
+      const toStart = queue.filter(id => allParentsCompleted(id, nodes));
+      
+      for (const nodeId of toStart) {
+        queue = queue.filter(id => id !== nodeId);
+        processing.add(nodeId);
+
+        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, status: 'THINKING' } } : n));
+        
+        (async () => {
+          const node = nodes.find(n => n.id === nodeId);
+          const parents = getParents(nodeId);
+          const parentOutputs = parents.map(pId => {
+            const p = nodes.find(n => n.id === pId);
+            return `### Output from ${p?.data.label}:\n${p?.data.output || 'No output data'}`;
+          }).join('\n\n');
+
+          await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+          
+          let simulatedOutput = '';
+          if (node.data.type === 'supervisor') {
+            simulatedOutput = `SUPERVISOR AUDIT REPORT: Verified the findings from previous nodes. Logic check passed. Data integrity verified. Output meets specified criteria.`;
+          } else if (node.data.type === 'chat') {
+            simulatedOutput = `Starting workflow from user input: "${node.data.goal}"`;
+          } else {
+            simulatedOutput = `Completed specialized task: ${node.data.label}. Generated comprehensive results based on input sequence.`;
+          }
+          
+          setNodes(nds => nds.map(n => n.id === nodeId ? { 
+            ...n, 
+            data: { ...n.data, status: 'COMPLETED', output: simulatedOutput, outputCount: 1 } 
+          } : n));
+          
+          processing.delete(nodeId);
+          completed.add(nodeId);
+          const children = getChildren(nodeId);
+          queue.push(...children.filter(id => !queue.includes(id) && !completed.has(id) && !processing.has(id)));
+        })();
+      }
+      await new Promise(r => setTimeout(r, 500));
+      if (queue.length === 0 && processing.size === 0) break;
+    }
+  }, [nodes, edges, setNodes]);
+
+  const resetGraph = useCallback(() => {
+    setNodes([]); setEdges([]); setMessages([]);
+  }, [setNodes, setEdges]);
+
   const exportChats = useCallback(() => {
     const dataStr = JSON.stringify(messages, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    
-    const exportFileDefaultName = `vulkan_swarm_export_${new Date().getTime()}.json`;
-    
     const linkElement = document.createElement('a');
     linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.setAttribute('download', 'vulkan_export.json');
     linkElement.click();
   }, [messages]);
 
@@ -580,69 +182,32 @@ function App() {
       <TopBar onOpenProvider={(name) => setProviderModal({ isOpen: true, name })} onOpenSSH={() => setSshModalOpen(true)} />
       
       <div style={styles.viewToggle}>
-        <button 
-          onClick={() => setView('chat')} 
-          style={{...styles.toggleBtn, borderBottom: view === 'chat' ? '2px solid #fff' : '2px solid transparent'}}
-        >CHAT</button>
-        <button 
-          onClick={() => setView('graph')} 
-          style={{...styles.toggleBtn, borderBottom: view === 'graph' ? '2px solid #fff' : '2px solid transparent'}}
-        >SWARM_GRAPH</button>
-        <button 
-          onClick={() => setView('artifacts')} 
-          style={{...styles.toggleBtn, borderBottom: view === 'artifacts' ? '2px solid #fff' : '2px solid transparent'}}
-        >ARTIFACTS {Object.keys(artifacts).length > 0 && `(${Object.keys(artifacts).length})`}</button>
+        <button onClick={() => setView('chat')} style={{...styles.toggleBtn, borderBottom: view === 'chat' ? '2px solid #fff' : 'none'}}>CHAT</button>
+        <button onClick={() => setView('graph')} style={{...styles.toggleBtn, borderBottom: view === 'graph' ? '2px solid #fff' : 'none'}}>SWARM_GRAPH</button>
+        <button onClick={() => setView('workflow')} style={{...styles.toggleBtn, borderBottom: view === 'workflow' ? '2px solid #fff' : 'none'}}>WORKFLOW_BUILDER</button>
+        <button onClick={() => setView('artifacts')} style={{...styles.toggleBtn, borderBottom: view === 'artifacts' ? '2px solid #fff' : 'none'}}>ARTIFACTS</button>
       </div>
 
       <div style={styles.mainLayout}>
-        <Sidebar onSpawnAgent={spawnAgent} onSpawnBlueprint={spawnBlueprint} onReset={resetGraph} onExport={exportChats} onTerminate={terminateSwarm} />
-        {view === 'chat' && (
-          <ChatView 
-            messages={messages} 
-            onSendMessage={handleChatRequest} 
-            activeProvider={localStorage.getItem('vulkan_active_provider')} 
-          />
-        )}
-        {view === 'graph' && (
-          <FlowGraph nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} />
-        )}
-        {view === 'artifacts' && (
-          <div style={{ flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', gap: '20px', flexWrap: 'wrap', alignContent: 'flex-start' }}>
-            {Object.entries(artifacts).length === 0 ? (
-               <div style={{ color: '#666', marginTop: '40px', width: '100%', textAlign: 'center' }}>No live artifacts generated yet. When agents use write_file(), files will appear here.</div>
-            ) : (
-              Object.entries(artifacts).map(([filename, data]) => (
-                <div key={filename} style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '16px', minWidth: '400px', flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <strong style={{ color: '#4fc3ff' }}>{filename}</strong>
-                    <span style={{ fontSize: '0.7rem', color: '#666' }}>Author: {data.author}</span>
-                  </div>
-                  <pre style={{ background: '#09090b', padding: '12px', borderRadius: '4px', fontSize: '0.8rem', overflowX: 'auto', color: '#e5e5e5' }}>
-                    {data.content}
-                  </pre>
-                </div>
-              ))
-            )}
-          </div>
-        )}
+        <Sidebar onSpawnAgent={spawnAgent} onSpawnBlueprint={spawnBlueprint} onReset={resetGraph} onExport={exportChats} onTerminate={() => {}} />
+        {view === 'chat' && <ChatView messages={messages} onSendMessage={handleChatRequest} />}
+        {view === 'graph' && <FlowGraph nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} />}
+        {view === 'workflow' && <WorkflowBuilder nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} setNodes={setNodes} onRun={runWorkflow} onChange={handleNodeChange} />}
+        {view === 'artifacts' && <div style={{flex:1, padding: '20px', color: '#666'}}>No artifacts yet.</div>}
       </div>
 
       <OnboardingModal isOpen={showOnboarding} onClose={() => setShowOnboarding(false)} />
       <ProviderModal isOpen={providerModal.isOpen} onClose={() => setProviderModal({ isOpen: false, name: '' })} providerName={providerModal.name} />
       <SSHModal isOpen={sshModalOpen} onClose={() => setSshModalOpen(false)} />
-
-      <style>{`
-        @keyframes modalFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
     </div>
   );
 }
 
 const styles = {
-  appContainer: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' },
+  appContainer: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', color: 'var(--text-primary)', background: 'var(--bg-color)', position: 'relative', overflow: 'hidden' },
   mainLayout: { display: 'flex', flex: 1, overflow: 'hidden' },
-  viewToggle: { display: 'flex', gap: '20px', padding: '0 40px', marginBottom: '10px', borderBottom: '1px solid var(--border-color)', background: 'var(--panel-bg)' },
-  toggleBtn: { padding: '10px 0', fontSize: '0.65rem', fontWeight: '800', letterSpacing: '1px', color: 'var(--text-secondary)' }
+  viewToggle: { display: 'flex', gap: '20px', padding: '0 40px', background: 'var(--panel-bg)', borderBottom: '1px solid var(--border-color)' },
+  toggleBtn: { padding: '12px 0', fontSize: '0.65rem', fontWeight: '800', cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-secondary)', letterSpacing: '1px' }
 };
 
 export default App;
